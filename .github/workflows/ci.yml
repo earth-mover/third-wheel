@@ -59,7 +59,7 @@ jobs:
       - name: Download icechunk wheel from nightly
         run: |
           mkdir -p wheels
-          pip download icechunk \
+          uv run python -m pip download icechunk \
             --index-url https://pypi.anaconda.org/scientific-python-nightly-wheels/simple \
             --no-deps \
             -d ./wheels/ || echo "Download failed, skipping integration test"
@@ -82,14 +82,14 @@ jobs:
             uv pip install --python test-venv/bin/python wheels/icechunk_v1-*.whl
 
             # Verify the import works
-            test-venv/bin/python -c "
+            test-venv/bin/python << 'PY'
           import icechunk_v1
           print(f'Successfully imported icechunk_v1 version: {icechunk_v1.__version__}')
 
           # Verify key classes are accessible
           from icechunk_v1 import Repository, IcechunkStore, Session
           print('All key classes imported successfully')
-          "
+          PY
           else
             echo "No renamed wheel found, skipping verification"
           fi
@@ -141,7 +141,7 @@ jobs:
       - name: Verify both versions are installed and isolated
         run: |
           cd tests/fixtures/dual-install
-          uv run python -c "
+          uv run python << 'EOF'
           import sys
 
           # Import both versions
@@ -166,4 +166,4 @@ jobs:
           assert icechunk_v1 is not icechunk, 'Modules should be different objects'
 
           print('SUCCESS: Both versions installed and isolated correctly!')
-          "
+          EOF
