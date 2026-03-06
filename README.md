@@ -62,6 +62,82 @@ uvx third-wheel inspect ./wheels/icechunk-*.whl
 
 ## Commands
 
+### 🛞 run
+
+Run a PEP 723 inline script with multi-version package support. This is the easiest way to use third-wheel — just annotate your script's dependencies and run it:
+
+```python
+# /// script
+# dependencies = [
+#   "icechunk_v1",  # icechunk<2
+#   "icechunk>=2",
+# ]
+# ///
+
+import icechunk_v1  # old version
+import icechunk     # new version
+
+print(f"v1: {icechunk_v1.__version__}")
+print(f"v2: {icechunk.__version__}")
+```
+
+```bash
+third-wheel run script.py
+```
+
+The comment after a dependency (`# icechunk<2`) tells third-wheel to install `icechunk<2` from the index but rename the package to `icechunk_v1`. The script can then `import icechunk_v1`.
+
+**Rename annotation syntax:**
+
+| Annotation | Meaning |
+|---|---|
+| `"icechunk_v1",  # icechunk<2` | Install icechunk<2, rename to icechunk_v1 |
+| `"zarr_v2",  # zarr>=2,<3` | Install zarr>=2,<3, rename to zarr_v2 |
+| `"my_requests",  # requests` | Install requests (any version), rename to my_requests |
+
+For more complex setups, use the structured `[tool.third-wheel]` form:
+
+```python
+# /// script
+# dependencies = ["icechunk_v1", "icechunk>=2"]
+# [tool.third-wheel]
+# renames = [
+#   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+# ]
+# ///
+```
+
+If both the comment syntax and `[tool.third-wheel]` specify the same `new-name`, the structured form takes priority.
+
+**CLI renames** override or supplement script annotations:
+
+```bash
+# Add a rename not in the script metadata
+third-wheel run script.py --rename "icechunk<2=icechunk_v1"
+
+# Use a custom index for renamed packages
+third-wheel run script.py -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+```
+
+The `--rename` format is `ORIGINAL[VERSION_SPEC]=NEW_NAME`.
+
+**Argument passing:** Unknown flags are passed through to the script automatically. Use `--` if a script flag conflicts with a third-wheel flag:
+
+```bash
+# --my-flag goes to the script
+third-wheel run script.py --my-flag value
+
+# Explicit separator for ambiguous flags
+third-wheel run script.py -- --rename "this-goes-to-script"
+```
+
+**Options:**
+
+- `--rename`: Rename rule (can be specified multiple times)
+- `-i, --index-url`: Package index URL for renamed packages (default: PyPI)
+- `--python-version`: Target Python version (e.g., `3.12`)
+- `-v, --verbose`: Print diagnostic info about what third-wheel is doing
+
 ### 🛞 rename
 
 Rename a wheel package:
@@ -214,6 +290,7 @@ If the extension doesn't use the underscore prefix pattern, the tool will warn y
 
 ## Limitations
 
+- **Wheels only**: third-wheel can only rename wheel (`.whl`) files, not sdists. If a package version only has sdists on PyPI (no wheels), it cannot be downloaded or renamed. Most modern packages publish wheels, but very old versions may not.
 - **Compiled extensions without underscore prefix**: Cannot be renamed without rebuilding
 - **Hardcoded package names in strings**: Not automatically updated (only import statements are)
 - **Entry points**: Updated in metadata but external scripts may need adjustment
