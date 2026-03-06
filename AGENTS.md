@@ -34,10 +34,12 @@ This document provides context and guidance for AI assistants working on the thi
 
 ```text
 src/third_wheel/
-├── __init__.py      # Package exports
+├── __init__.py      # Package exports, version from _version.py (hatch-vcs)
 ├── cli.py           # Click-based CLI with rich output
 ├── download.py      # PEP 503 index client using pypi-simple
+├── patch.py         # Patch dependency references in wheels
 ├── rename.py        # Core wheel manipulation logic
+├── run.py           # PEP 723 inline script runner with rename support
 └── server/          # Proxy server for on-the-fly renaming
     ├── __init__.py
     ├── app.py       # FastAPI application with PEP 503 endpoints
@@ -49,13 +51,20 @@ src/third_wheel/
 tests/
 ├── conftest.py              # Shared fixtures for venv creation
 ├── test_rename.py           # Unit tests for rename functions
+├── test_download.py         # Wheel tag parsing tests
+├── test_run.py              # PEP 723 metadata parsing and rename tests
+├── test_patch.py            # Dependency patching tests
+├── test_config.py           # Server configuration tests
+├── test_server.py           # Proxy server endpoint tests
 ├── test_integration.py      # Import rewriting tests
 ├── test_dual_install.py     # Multi-package isolation tests
 ├── test_icechunk_integration.py  # Real icechunk wheel tests
 └── fixtures/
     └── dual-install/        # Example project for multi-version install
-        ├── pyproject.toml   # uv config with both icechunk versions
-        └── README.md        # Usage documentation
+
+examples/
+├── cli_rename.py                # CLI rename demo (urllib3 v1 + v2)
+└── icechunk_dual_version.py     # Inline annotation demo (icechunk v1 + v2)
 ```
 
 ## Important Functions
@@ -71,13 +80,25 @@ tests/
 
 - `download_compatible_wheel(package, output_dir, index_url, version)` - Download best match
 - `best_wheel(packages, compatible_tags)` - Select most compatible wheel
-- `parse_wheel_tags(filename)` - Extract platform tags from wheel name
+- `parse_wheel_tags(filename)` - Extract platform tags from wheel name (handles dot-separated tags like `py2.py3`)
+
+### `patch.py`
+
+- `patch_wheel(wheel_path, old_dep, new_dep, output_dir)` - Rewrite dependency references inside a wheel
+- `patch_wheel_from_bytes(data, filename, old_dep, new_dep)` - In-memory variant for proxy streaming
+
+### `run.py`
+
+- `parse_pep723_metadata(script)` - Extract PEP 723 inline metadata block
+- `extract_renames_from_comments(toml_str)` - Parse `"pkg_v1",  # pkg<2` comment annotations
+- `extract_renames_from_tool_table(toml_str)` - Parse `[tool.third-wheel]` structured metadata
+- `parse_cli_renames(rename_args)` - Parse `--rename "pkg<2=pkg_v1"` CLI args (splits on last `=`)
+- `run_script(script_path, cli_renames, index_url, ...)` - Orchestrate download, rename, and `uv run`
 
 ### `cli.py`
 
-- Default command is `rename` when first arg ends with `.whl`
-- Uses `DefaultToRename` custom Click group class
 - Rich console output for nice formatting
+- `run` command uses `ignore_unknown_options=True` for arg passthrough to scripts
 
 ## Testing Patterns
 
@@ -103,9 +124,9 @@ v1_renamed = rename_wheel(v1_wheel, "mypkg_v1", output_dir=tmp_path)
 ### Running Tests
 
 ```bash
-uv run pytest tests/                     # All tests
-uv run pytest tests/test_rename.py       # Unit tests only
-uv run pytest -m integration             # Integration tests (slower, network)
+uv run python -m pytest tests/           # All tests
+uv run python -m pytest tests/test_rename.py  # Unit tests only
+uv run python -m pytest -m integration   # Integration tests (slower, network)
 ```
 
 ## Common Tasks
@@ -131,6 +152,11 @@ Be careful with word boundaries (`\b`) to avoid partial matches.
 ### Adding Test Coverage
 
 - Unit tests go in `test_rename.py`
+- Tag/download tests go in `test_download.py`
+- Run/metadata parsing tests go in `test_run.py`
+- Patch tests go in `test_patch.py`
+- Server config tests go in `test_config.py`
+- Server endpoint tests go in `test_server.py`
 - Import rewriting tests go in `test_integration.py`
 - Multi-package isolation tests go in `test_dual_install.py`
 - Real wheel tests go in `test_icechunk_integration.py` with `@pytest.mark.integration`
@@ -179,9 +205,11 @@ index-strategy = "unsafe-best-match"  # Required for mixing indexes
 resolution = "highest"
 ```
 
-## Implementing Multi-Version Install in a New Repo
+## Implementing Multi-Version Install
 
-To set up a project that installs both `icechunk` (v2) and `icechunk_v1` (v1):
+The simplest approach is `third-wheel run` with a PEP 723 script. See examples/ for working demos.
+
+For project-level setups that need `uv sync`, use the proxy server:
 
 ### Step 1: Install third-wheel with server extras
 
@@ -245,10 +273,10 @@ See `tests/fixtures/dual-install/` for a complete working example with:
 
 ## Git Workflow
 
-- `main` branch has core rename/download/inspect functionality
-- `feature/proxy-index` branch has the proxy server implementation
-- Run `uv run ruff check src tests` before committing
-- Pre-commit hooks handle formatting
+- All development happens on feature branches off `main`
+- Pre-commit hooks (via `prek`) run ruff check, ruff format, and markdownlint on commit
+- CI runs all unit tests and integration tests on PRs
+- Releases are triggered by creating a GitHub Release (see RELEASE.md)
 
 ## Environment
 
@@ -265,9 +293,24 @@ See `tests/fixtures/dual-install/` for a complete working example with:
 4. **pypi-simple is sync** - For async proxy, need to wrap or use httpx directly
 5. **Wheel filenames must match internal metadata** - After renaming, filename, directory name, and METADATA Name must all match
 
+## Keeping AGENTS.md Up to Date
+
+**This file must be updated as the project evolves.** When you:
+
+- Add a new module, add it to the codebase structure and important functions sections
+- Add a new CLI command, add it to the useful commands section
+- Add a new test file, add it to the test coverage section
+- Change how builds, releases, or CI work, update the relevant sections
+- Discover a new gotcha, add it to the gotchas section
+
+If you are unsure whether a change warrants an update here, err on the side of updating.
+
 ## Useful Commands
 
 ```bash
+# Run a PEP 723 script with inline rename annotations
+uv run third-wheel run examples/cli_rename.py --rename "urllib3<2=urllib3_v1"
+
 # List available wheels for a package
 uv run third-wheel download icechunk --list -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
 
