@@ -51,6 +51,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Generated version file
+src/third_wheel/_version.py
+
 # Project specific
 inspect-wheel/
 test-venv/
