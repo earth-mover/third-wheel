@@ -23,10 +23,6 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
 
 
 @dataclass
@@ -209,8 +205,7 @@ def parse_cli_renames(rename_args: tuple[str, ...] | list[str]) -> list[RenameSp
 
         if not name_re.match(new_name):
             raise ValueError(
-                f"Invalid new name in --rename: {new_name!r}. "
-                f"Must be a valid Python package name."
+                f"Invalid new name in --rename: {new_name!r}. Must be a valid Python package name."
             )
 
         m = pkg_re.match(lhs)
@@ -291,7 +286,6 @@ def _prepare_wheels(
     wheel_dir: Path,
     index_url: str,
     python_version: str | None,
-    use_proxy: bool = False,
 ) -> None:
     """Download and rename wheels for all rename specs.
 
@@ -300,7 +294,6 @@ def _prepare_wheels(
         wheel_dir: Directory to place renamed wheels
         index_url: Package index URL
         python_version: Target Python version
-        use_proxy: If True, use the proxy server approach (not yet implemented)
     """
     from third_wheel.download import download_compatible_wheel
     from third_wheel.rename import rename_wheel
@@ -315,9 +308,7 @@ def _prepare_wheels(
             show_progress=False,
         )
         if downloaded is None:
-            raise RuntimeError(
-                f"Could not find a compatible wheel for {spec.version_spec}"
-            )
+            raise RuntimeError(f"Could not find a compatible wheel for {spec.version_spec}")
 
         renamed = rename_wheel(downloaded, spec.new_name, output_dir=wheel_dir)
         # Remove the original (un-renamed) wheel

@@ -18,14 +18,14 @@ from third_wheel.run import (
 
 class TestParsePEP723Metadata:
     def test_basic_metadata(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "requests",
 # ]
 # ///
 import requests
-'''
+"""
         result = parse_pep723_metadata(script)
         assert result is not None
         assert '"requests"' in result
@@ -35,7 +35,7 @@ import requests
         assert parse_pep723_metadata(script) is None
 
     def test_metadata_with_tool_section(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "icechunk_v1",
@@ -45,28 +45,28 @@ import requests
 #   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
 # ]
 # ///
-'''
+"""
         result = parse_pep723_metadata(script)
         assert result is not None
         assert "tool.third-wheel" in result
         assert "icechunk" in result
 
     def test_empty_metadata(self):
-        script = '''\
+        script = """\
 # /// script
 # ///
-'''
+"""
         assert parse_pep723_metadata(script) is None
 
 
 class TestExtractRenamesFromComments:
     def test_basic_rename_comment(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "icechunk_v1",  # icechunk<2
   "icechunk>=2",
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 1
         assert renames[0].original == "icechunk"
@@ -74,22 +74,22 @@ dependencies = [
         assert renames[0].version == "<2"
 
     def test_spaced_version(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "icechunk_v1",  # icechunk < 2
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 1
         assert renames[0].original == "icechunk"
         assert renames[0].version == "< 2"
 
     def test_complex_version_spec(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "zarr_v2",  # zarr>=2.0,<3
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 1
         assert renames[0].original == "zarr"
@@ -97,11 +97,11 @@ dependencies = [
         assert renames[0].version == ">=2.0,<3"
 
     def test_no_version(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "my_requests",  # requests
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 1
         assert renames[0].original == "requests"
@@ -109,23 +109,23 @@ dependencies = [
         assert renames[0].version is None
 
     def test_no_rename_comments(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "requests",
   "numpy>=1.0",
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 0
 
     def test_multiple_renames(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "icechunk_v1",  # icechunk<2
   "zarr_v2",  # zarr<3
   "requests",
 ]
-'''
+"""
         renames = extract_renames_from_comments(toml_str)
         assert len(renames) == 2
         names = {r.new_name for r in renames}
@@ -144,7 +144,7 @@ dependencies = [
 
 class TestExtractRenamesFromToolTable:
     def test_basic_tool_table(self):
-        toml_str = '''\
+        toml_str = """\
 dependencies = [
   "icechunk_v1",
 ]
@@ -152,7 +152,7 @@ dependencies = [
 renames = [
   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
 ]
-'''
+"""
         renames = extract_renames_from_tool_table(toml_str)
         assert len(renames) == 1
         assert renames[0].original == "icechunk"
@@ -160,13 +160,13 @@ renames = [
         assert renames[0].version == "<2"
 
     def test_multiple_renames(self):
-        toml_str = '''\
+        toml_str = """\
 [tool.third-wheel]
 renames = [
   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
   {original = "zarr", new-name = "zarr_v2", version = "<3"},
 ]
-'''
+"""
         renames = extract_renames_from_tool_table(toml_str)
         assert len(renames) == 2
 
@@ -176,12 +176,12 @@ renames = [
         assert len(renames) == 0
 
     def test_no_version(self):
-        toml_str = '''\
+        toml_str = """\
 [tool.third-wheel]
 renames = [
   {original = "requests", new-name = "my_requests"},
 ]
-'''
+"""
         renames = extract_renames_from_tool_table(toml_str)
         assert len(renames) == 1
         assert renames[0].version is None
@@ -193,20 +193,20 @@ renames = [
 
 class TestParseAllRenames:
     def test_comment_only(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "icechunk_v1",  # icechunk<2
 #   "icechunk>=2",
 # ]
 # ///
-'''
+"""
         renames = parse_all_renames(script)
         assert len(renames) == 1
         assert renames[0].new_name == "icechunk_v1"
 
     def test_tool_table_only(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "icechunk_v1",
@@ -216,13 +216,13 @@ class TestParseAllRenames:
 #   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
 # ]
 # ///
-'''
+"""
         renames = parse_all_renames(script)
         assert len(renames) == 1
         assert renames[0].new_name == "icechunk_v1"
 
     def test_tool_table_wins_over_comment(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "icechunk_v1",  # icechunk<3
@@ -232,7 +232,7 @@ class TestParseAllRenames:
 #   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
 # ]
 # ///
-'''
+"""
         renames = parse_all_renames(script)
         assert len(renames) == 1
         # Tool table version wins
@@ -297,7 +297,7 @@ class TestMergeRenames:
 
 class TestRewriteScriptMetadata:
     def test_strips_rename_comments(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "icechunk_v1",  # icechunk<2
@@ -306,7 +306,7 @@ class TestRewriteScriptMetadata:
 # ]
 # ///
 import icechunk_v1
-'''
+"""
         renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
         result = rewrite_script_metadata(script, renames)
         # The rename comment should be stripped
@@ -320,13 +320,13 @@ import icechunk_v1
         assert "import icechunk_v1" in result
 
     def test_no_changes_without_renames(self):
-        script = '''\
+        script = """\
 # /// script
 # dependencies = [
 #   "requests",
 # ]
 # ///
-'''
+"""
         result = rewrite_script_metadata(script, [])
         assert result == script
 

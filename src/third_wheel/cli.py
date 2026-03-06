@@ -493,9 +493,7 @@ def serve(
     help="Print extra diagnostic info",
 )
 @click.argument("script_args", nargs=-1, type=click.UNPROCESSED)
-@click.pass_context
 def run(
-    ctx: click.Context,
     script: Path,
     renames: tuple[str, ...],
     index_url: str,

@@ -33,8 +33,8 @@ This will:
   4. Everything else from PyPI
 """
 
-import icechunk_v1
 import icechunk
+import icechunk_v1
 
 print(f"icechunk v1: {icechunk_v1.__version__}")
 print(f"icechunk v2: {icechunk.__version__}")
