@@ -52,6 +52,7 @@ packages = ["src/third_wheel"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+extend-exclude = ["src/third_wheel/_version.py"]
 
 [tool.ruff.lint]
 select = [
