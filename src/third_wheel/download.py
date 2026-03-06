@@ -66,7 +66,10 @@ def parse_wheel_tags(filename: str) -> list[Tag]:
         abi_tag = parts[3]
         plat_tags = parts[4].split(".")
 
-    return [Tag(py_tag, abi_tag, plat) for plat in plat_tags]
+    # All three tag fields can be dot-separated (e.g., py2.py3-none-any)
+    py_tags = py_tag.split(".")
+    abi_tags = abi_tag.split(".")
+    return [Tag(py, abi, plat) for py in py_tags for abi in abi_tags for plat in plat_tags]
 
 
 def best_wheel(

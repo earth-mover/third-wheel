@@ -14,6 +14,7 @@ from rich.table import Table
 from third_wheel.download import download_compatible_wheel, list_wheels
 from third_wheel.patch import patch_wheel
 from third_wheel.rename import inspect_wheel, rename_wheel
+from third_wheel.run import parse_cli_renames, run_script
 
 console = Console()
 err_console = Console(stderr=True)
@@ -453,6 +454,147 @@ def serve(
 
     except Exception as e:
         err_console.print(f"[red]🔧 Error:[/red] {e}")
+        sys.exit(1)
+
+
+@main.command(
+    context_settings={
+        "ignore_unknown_options": True,
+        "allow_extra_args": True,
+    },
+)
+@click.argument("script", type=click.Path(exists=True, path_type=Path))
+@click.option(
+    "--rename",
+    "renames",
+    multiple=True,
+    help=(
+        "Rename rule: 'original[version_spec]=new_name' "
+        "(e.g., 'icechunk<2=icechunk_v1'). Can be specified multiple times."
+    ),
+)
+@click.option(
+    "-i",
+    "--index-url",
+    default="https://pypi.org/simple/",
+    help="Package index URL for renamed packages (default: PyPI)",
+)
+@click.option(
+    "--python-version",
+    "python_version",
+    default=None,
+    help="Target Python version (e.g., '3.12'). Defaults to current interpreter.",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Print extra diagnostic info",
+)
+@click.argument("script_args", nargs=-1, type=click.UNPROCESSED)
+def run(
+    script: Path,
+    renames: tuple[str, ...],
+    index_url: str,
+    python_version: str | None,
+    verbose: bool,
+    script_args: tuple[str, ...],
+) -> None:
+    """Run a PEP 723 inline script with multi-version package support.
+
+    \b
+    Runs a Python script that uses PEP 723 inline metadata, with support
+    for installing multiple versions of the same package under different
+    names. Renames are detected from the script metadata and the packages
+    are downloaded, renamed, and made available before the script runs
+    via `uv run`.
+
+    \b
+    RENAME ANNOTATIONS
+    ==================
+    Add a comment after a dependency to mark it as a rename:
+
+    \b
+        # /// script
+        # dependencies = [
+        #   "icechunk_v1",  # icechunk<2
+        #   "icechunk>=2",
+        # ]
+        # ///
+
+    \b
+    The comment syntax is:  "NEW_NAME",  # ORIGINAL_PKG VERSION_SPEC
+    This tells third-wheel: install ORIGINAL_PKG (with VERSION_SPEC),
+    but rename it to NEW_NAME so you can `import NEW_NAME`.
+
+    \b
+    For more complex setups, use the structured form:
+
+    \b
+        # /// script
+        # dependencies = ["icechunk_v1", "icechunk>=2"]
+        # [tool.third-wheel]
+        # renames = [
+        #   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+        # ]
+        # ///
+
+    \b
+    If both forms specify the same new-name, [tool.third-wheel] wins.
+
+    \b
+    CLI RENAMES
+    ===========
+    You can also specify renames on the command line with --rename.
+    The format is:  ORIGINAL_PKG[VERSION_SPEC]=NEW_NAME
+
+    \b
+        third-wheel run script.py --rename "icechunk<2=icechunk_v1"
+
+    \b
+    CLI renames override any matching renames from the script metadata.
+
+    \b
+    ARGUMENT PASSING
+    ================
+    Unknown flags are passed through to the script automatically:
+
+    \b
+        third-wheel run script.py --my-flag value
+
+    \b
+    If the script uses a flag that conflicts with a third-wheel flag
+    (e.g., --rename), use -- to separate them:
+
+    \b
+        third-wheel run script.py -- --rename "this-goes-to-script"
+
+    \b
+    EXAMPLES
+    ========
+        third-wheel run script.py
+        third-wheel run script.py --rename "icechunk<2=icechunk_v1"
+        third-wheel run script.py -i https://my-index/simple
+        third-wheel run script.py -v --my-script-flag
+        third-wheel run script.py -- --rename "arg-for-script"
+    """
+    try:
+        cli_rename_specs = parse_cli_renames(renames) if renames else []
+
+        exit_code = run_script(
+            script_path=script,
+            cli_renames=cli_rename_specs,
+            index_url=index_url,
+            python_version=python_version,
+            script_args=list(script_args),
+            verbose=verbose,
+        )
+
+        sys.exit(exit_code)
+
+    except Exception as e:
+        err_console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
 
