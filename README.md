@@ -17,16 +17,82 @@ import icechunk     # The v2 version
 ## Installation
 
 ```bash
-# Use directly with uvx (recommended)
+# Run directly with uvx (no install needed)
 uvx third-wheel --help
 
-# Or install globally
+# Or install as a persistent tool
+uv tool install third-wheel
+
+# Or install with pip
 pip install third-wheel
 ```
 
+## Quick Start: `third-wheel run`
+
+The easiest way to use third-wheel is with inline PEP 723 scripts. Write a script
+with rename annotations in the dependencies, and `third-wheel run` handles the rest:
+
+```python
+# test_versions.py
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "urllib3_v1",  # urllib3<2
+#   "urllib3>=2",
+# ]
+# ///
+
+import urllib3
+import urllib3_v1
+
+print(f"urllib3 v2: {urllib3.__version__}")
+print(f"urllib3 v1: {urllib3_v1.__version__}")
+```
+
+```bash
+third-wheel run test_versions.py
+```
+
+The comment `# urllib3<2` after `"urllib3_v1"` tells third-wheel: download `urllib3<2`,
+rename it to `urllib3_v1`, and make it available alongside the latest `urllib3>=2`.
+
 ## End-to-End Example: icechunk v1 + v2
 
-Here's a complete example of setting up both icechunk versions for regression testing:
+### Using `third-wheel run` (recommended)
+
+```python
+# test_icechunk.py
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#   "icechunk_v1",  # icechunk<2
+#   "icechunk>=2.0.0a0",
+# ]
+#
+# [[tool.uv.index]]
+# name = "scientific-python-nightly-wheels"
+# url = "https://pypi.anaconda.org/scientific-python-nightly-wheels/simple"
+#
+# [tool.uv]
+# index-strategy = "unsafe-best-match"
+#
+# [tool.uv.sources]
+# icechunk = { index = "scientific-python-nightly-wheels" }
+# ///
+
+import icechunk
+import icechunk_v1
+
+print(f"v1: {icechunk_v1.__version__}")
+print(f"v2: {icechunk.__version__}")
+```
+
+```bash
+third-wheel run test_icechunk.py \
+    -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+```
+
+### Using download + rename manually
 
 ```bash
 # 1. Download and rename v1 in one command (specify target Python version for uvx)
