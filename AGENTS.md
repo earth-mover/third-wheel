@@ -106,6 +106,7 @@ examples/
 - `parse_renames_from_pyproject(path)` - Read rename specs from pyproject.toml (comment annotations + structured `[tool.third-wheel]` metadata, merged with structured form winning on conflict)
 - `sync(renames, *, index_url, find_links, python_version, force, verbose)` - Orchestrate download+rename+install into the current venv. Uses same caching as `run`. Supports local wheels via `find_links`. The `force` param skips cache and re-downloads.
 - `add_rename_to_pyproject(path, spec)` - Add or update a rename entry in pyproject.toml's `[tool.third-wheel]` section. Creates the section if it doesn't exist; updates in place if the same `new-name` already exists.
+- `add_rename_to_script(path, spec)` - Add or update a rename entry in a PEP 723 inline script. Adds the new package to dependencies and creates/updates a `[tool.third-wheel]` renames entry within the metadata block.
 - `_find_wheel_in_directory(find_links, original, version)` - Find the highest-version matching wheel in a local directory
 - `_prepare_wheels_from_find_links(renames, wheel_dir, find_links)` - Copy and rename wheels from a local directory instead of downloading
 - `get_pyproject_config(path)` - Read optional config (e.g., `index-url`) from `[tool.third-wheel]` (public)
@@ -117,7 +118,7 @@ examples/
 - Rich console output for nice formatting
 - `run` command uses `ignore_unknown_options=True` for arg passthrough to scripts
 - `sync_cmd` reads renames from pyproject.toml + CLI flags, merges them, calls `sync()`
-- `add_cmd` parses a CLI rename spec, writes it to pyproject.toml, optionally runs sync
+- `add_cmd` parses a CLI rename spec, writes it to pyproject.toml (or PEP 723 script via `--script`), optionally runs sync
 - `cache_clean_cmd` removes cached wheels from sync and/or run operations
 
 ## Testing Patterns

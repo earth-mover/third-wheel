@@ -274,20 +274,24 @@ third-wheel sync --rename "icechunk>=1,<2=icechunk_v1"
 
 ### 🛞 add
 
-Add a rename to `pyproject.toml`'s `[tool.third-wheel]` section. Optionally install it immediately with `--sync`.
+Add a rename to `pyproject.toml`'s `[tool.third-wheel]` section, or to a PEP 723 inline script with `--script`. Optionally install it immediately with `--sync`.
 
 ```bash
 third-wheel add <rename_spec> [--sync] [-i <index_url>] [-p <pyproject>]
+third-wheel add --script <script.py> <rename_spec>
 
 # Examples:
 third-wheel add "icechunk<2=icechunk_v1"
 third-wheel add "icechunk<2=icechunk_v1" --sync
 third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+third-wheel add --script compare.py "pandas<2=pandas_v2"
 ```
 
 The `RENAME_SPEC` format is `ORIGINAL[VERSION_SPEC]=NEW_NAME` (same as `--rename` elsewhere).
 
-If `[tool.third-wheel]` doesn't exist in pyproject.toml, it is created. If a rename with the same `new-name` already exists, it is updated in place.
+For **pyproject.toml**: if `[tool.third-wheel]` doesn't exist, it is created. If a rename with the same `new-name` already exists, it is updated in place.
+
+For **scripts**: the dependency is added to the `dependencies` list and a `[tool.third-wheel]` renames entry is added inside the `# /// script` metadata block.
 
 **Options:**
 

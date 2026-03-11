@@ -811,6 +811,13 @@ def sync_cmd(
 @main.command(name="add")
 @click.argument("rename_spec")
 @click.option(
+    "--script",
+    "script_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Add the rename to a PEP 723 inline script instead of pyproject.toml",
+)
+@click.option(
     "-i",
     "--index-url",
     default=None,
@@ -839,12 +846,13 @@ def sync_cmd(
 )
 def add_cmd(
     rename_spec: str,
+    script_path: Path | None,
     index_url: str | None,
     pyproject_path: Path | None,
     run_sync: bool,
     verbose: bool,
 ) -> None:
-    """Add a rename to pyproject.toml's [tool.third-wheel] section.
+    """Add a rename to pyproject.toml or a PEP 723 inline script.
 
     \b
     RENAME_SPEC format: 'original[version_spec]=new_name'
@@ -852,8 +860,12 @@ def add_cmd(
     \b
     EXAMPLES
     ========
-        # Add icechunk v1 rename
+        # Add to pyproject.toml
         third-wheel add "icechunk<2=icechunk_v1"
+
+    \b
+        # Add to a PEP 723 script
+        third-wheel add --script myscript.py "icechunk<2=icechunk_v1"
 
     \b
         # Add and immediately install
@@ -863,7 +875,12 @@ def add_cmd(
         # With a specific index
         third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/.../simple
     """
-    from third_wheel.sync import add_rename_to_pyproject, get_pyproject_config, sync
+    from third_wheel.sync import (
+        add_rename_to_pyproject,
+        add_rename_to_script,
+        get_pyproject_config,
+        sync,
+    )
 
     try:
         # Parse the rename spec
@@ -873,7 +890,18 @@ def add_cmd(
             sys.exit(1)
         spec = specs[0]
 
-        # Find pyproject.toml
+        if script_path is not None:
+            # --- Script mode ---
+            add_rename_to_script(script_path, spec)
+
+            ver = f" ({spec.version})" if spec.version else ""
+            console.print(
+                f"[green]Added:[/green] {spec.original}{ver} "
+                f"-> [bold]{spec.new_name}[/bold] to {script_path}"
+            )
+            return
+
+        # --- pyproject.toml mode ---
         if pyproject_path is None:
             pyproject_path = Path("pyproject.toml")
 

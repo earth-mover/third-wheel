@@ -310,6 +310,140 @@ def sync(
 
 
 # ---------------------------------------------------------------------------
+# Script (PEP 723) modification helpers
+# ---------------------------------------------------------------------------
+
+
+def add_rename_to_script(
+    script_path: Path,
+    spec: RenameSpec,
+) -> None:
+    """Add or update a rename entry in a PEP 723 inline script.
+
+    Adds the new package name to the ``dependencies`` list (if not already
+    present) and adds/updates a ``[tool.third-wheel]`` renames entry inside
+    the ``# /// script`` metadata block.
+
+    Args:
+        script_path: Path to the Python script.
+        spec: The rename specification to add.
+    """
+    content = script_path.read_text()
+    lines = content.splitlines(keepends=True)
+
+    # Find the metadata block boundaries (line indices)
+    block_start: int | None = None
+    block_end: int | None = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped == "# /// script":
+            block_start = i
+        elif stripped == "# ///" and block_start is not None:
+            block_end = i
+            break
+
+    if block_start is None or block_end is None:
+        raise ValueError(f"No PEP 723 metadata block found in {script_path}")
+
+    # Extract the TOML content (without # prefix) to find structure
+    block_lines = lines[block_start + 1 : block_end]
+
+    # --- Step 1: ensure new_name is in the dependencies list ---
+    dep_name = spec.new_name
+    dep_found = False
+    deps_end_idx: int | None = None  # line index (in `lines`) of the closing ]
+
+    for i, line in enumerate(block_lines, start=block_start + 1):
+        stripped = line.strip()
+        # Strip the "# " prefix to get TOML content
+        if stripped.startswith("# "):
+            toml_line = stripped[2:]
+        elif stripped == "#":
+            toml_line = ""
+        else:
+            continue
+
+        # Check if this dep is already listed
+        if f'"{dep_name}"' in toml_line or f"'{dep_name}'" in toml_line:
+            dep_found = True
+
+        # Track end of dependencies list
+        if toml_line.strip() == "]" and deps_end_idx is None:
+            deps_end_idx = i
+
+    if not dep_found and deps_end_idx is not None:
+        # Insert the new dependency before the closing ]
+        indent = "#   "  # standard PEP 723 indent
+        new_dep_line = f'{indent}"{dep_name}",\n'
+        lines.insert(deps_end_idx, new_dep_line)
+        # Adjust block_end since we inserted a line
+        block_end += 1
+
+    # --- Step 2: add/update [tool.third-wheel] renames ---
+    version_part = f', version = "{spec.version}"' if spec.version else ""
+    entry = f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}}}'
+
+    # Re-scan block for [tool.third-wheel] section
+    tw_section_idx: int | None = None
+    renames_start_idx: int | None = None
+    renames_end_idx: int | None = None
+    existing_entry_idx: int | None = None
+
+    for i in range(block_start + 1, block_end):
+        stripped = lines[i].strip()
+        if stripped.startswith("# "):
+            toml_line = stripped[2:]
+        elif stripped == "#":
+            toml_line = ""
+        else:
+            continue
+
+        if toml_line.strip() == "[tool.third-wheel]":
+            tw_section_idx = i
+        elif tw_section_idx is not None and renames_start_idx is None:
+            if toml_line.strip().startswith("renames"):
+                renames_start_idx = i
+        elif renames_start_idx is not None and renames_end_idx is None:
+            if f'new-name = "{spec.new_name}"' in toml_line:
+                existing_entry_idx = i
+            if toml_line.strip() == "]":
+                renames_end_idx = i
+
+    prefix = "# "
+
+    if existing_entry_idx is not None:
+        # Update the existing entry in place
+        lines[existing_entry_idx] = f"{prefix}  {entry},\n"
+    elif renames_end_idx is not None:
+        # Append before the closing ]
+        lines.insert(renames_end_idx, f"{prefix}  {entry},\n")
+        block_end += 1
+    elif tw_section_idx is not None:
+        # Section exists but no renames key — add after section header
+        insert_idx = tw_section_idx + 1
+        new_lines = [
+            f"{prefix}renames = [\n",
+            f"{prefix}  {entry},\n",
+            f"{prefix}]\n",
+        ]
+        for j, nl in enumerate(new_lines):
+            lines.insert(insert_idx + j, nl)
+        block_end += len(new_lines)
+    else:
+        # No [tool.third-wheel] section — create before # ///
+        new_lines = [
+            f"{prefix}[tool.third-wheel]\n",
+            f"{prefix}renames = [\n",
+            f"{prefix}  {entry},\n",
+            f"{prefix}]\n",
+        ]
+        for j, nl in enumerate(new_lines):
+            lines.insert(block_end + j, nl)
+
+    script_path.write_text("".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # pyproject.toml modification helpers
 # ---------------------------------------------------------------------------
 

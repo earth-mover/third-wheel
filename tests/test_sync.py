@@ -30,6 +30,7 @@ from third_wheel.run import RenameSpec
 from third_wheel.sync import (
     _find_wheel_in_directory,
     add_rename_to_pyproject,
+    add_rename_to_script,
     get_pyproject_config,
     parse_renames_from_pyproject,
 )
@@ -1428,6 +1429,379 @@ class TestAddCLI:
         renames = call_args[0][0]
         assert len(renames) == 1
         assert renames[0].new_name == "icechunk_v1"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: add_rename_to_script
+# ---------------------------------------------------------------------------
+
+
+class TestAddRenameToScript:
+    """Test adding renames to PEP 723 inline scripts."""
+
+    def test_adds_to_empty_script(self, tmp_path: Path) -> None:
+        """Adds dependency and [tool.third-wheel] to a script with existing metadata."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # requires-python = ">=3.12"
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            import numpy
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1", version="<2")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        # Dependency added
+        assert '"icechunk_v1"' in content
+        # Structured rename added
+        assert "[tool.third-wheel]" in content
+        assert 'original = "icechunk"' in content
+        assert 'new-name = "icechunk_v1"' in content
+        assert 'version = "<2"' in content
+        # Original content preserved
+        assert "import numpy" in content
+
+    def test_adds_to_script_with_existing_tool_section(self, tmp_path: Path) -> None:
+        """Appends to existing [tool.third-wheel] renames."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "zarr_v2",
+            # ]
+            # [tool.third-wheel]
+            # renames = [
+            #   {original = "zarr", new-name = "zarr_v2", version = "<3"},
+            # ]
+            # ///
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1", version="<2")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        assert '"icechunk_v1"' in content
+        assert 'new-name = "icechunk_v1"' in content
+        # Original rename preserved
+        assert 'new-name = "zarr_v2"' in content
+
+    def test_updates_existing_rename(self, tmp_path: Path) -> None:
+        """Updates an existing rename with the same new-name."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "icechunk_v1",
+            # ]
+            # [tool.third-wheel]
+            # renames = [
+            #   {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+            # ]
+            # ///
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1", version="<3")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        assert 'version = "<3"' in content
+        assert 'version = "<2"' not in content
+
+    def test_does_not_duplicate_dependency(self, tmp_path: Path) -> None:
+        """Doesn't add the dependency if it's already there."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "icechunk_v1",
+            # ]
+            # ///
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1", version="<2")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        # The dep appears once in dependencies + once in renames entry = 2 total
+        # But in the dependencies list itself, it should only appear once
+        dep_occurrences = sum(
+            1 for line in content.splitlines() if line.strip() == '#   "icechunk_v1",'
+        )
+        assert dep_occurrences == 1
+
+    def test_no_metadata_block_raises(self, tmp_path: Path) -> None:
+        """Raises ValueError when no PEP 723 block exists."""
+        script = tmp_path / "test.py"
+        script.write_text("print('hello')\n")
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1")
+        with pytest.raises(ValueError, match="No PEP 723"):
+            add_rename_to_script(script, spec)
+
+    def test_without_version(self, tmp_path: Path) -> None:
+        """Adds rename without version constraint."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        assert 'original = "icechunk"' in content
+        assert "version" not in content.split("icechunk_v1")[1].split("}")[0]
+
+    def test_result_is_valid_pep723(self, tmp_path: Path) -> None:
+        """Result can be parsed back by parse_pep723_metadata."""
+        from third_wheel.run import parse_all_renames, parse_pep723_metadata
+
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # requires-python = ">=3.12"
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            import numpy
+        """)
+        )
+
+        spec = RenameSpec(original="icechunk", new_name="icechunk_v1", version="<2")
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        toml_str = parse_pep723_metadata(content)
+        assert toml_str is not None
+
+        renames = parse_all_renames(content)
+        assert len(renames) == 1
+        assert renames[0].original == "icechunk"
+        assert renames[0].new_name == "icechunk_v1"
+        assert renames[0].version == "<2"
+
+
+class TestAddCLIScript:
+    """Test `third-wheel add --script` CLI command."""
+
+    def test_add_to_script(self, tmp_path: Path) -> None:
+        """CLI adds rename to a script file."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+        """)
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["add", "--script", str(script), "icechunk<2=icechunk_v1"],
+        )
+        assert result.exit_code == 0
+        assert "Added" in result.output
+        assert "test.py" in result.output
+
+        content = script.read_text()
+        assert '"icechunk_v1"' in content
+        assert "[tool.third-wheel]" in content
+
+    def test_add_to_nonexistent_script_errors(self) -> None:
+        """CLI errors when script doesn't exist."""
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["add", "--script", "/nonexistent/script.py", "icechunk<2=icechunk_v1"],
+        )
+        assert result.exit_code != 0
+
+
+class TestAddScriptIntegration:
+    """Integration tests for add --script: full round-trip workflows."""
+
+    def test_add_then_parse_round_trip(self, tmp_path: Path) -> None:
+        """Add multiple renames via CLI, then verify they parse back correctly."""
+        from third_wheel.run import parse_all_renames
+
+        script = tmp_path / "multi.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # requires-python = ">=3.12"
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            print("hello")
+        """)
+        )
+
+        runner = CliRunner()
+
+        # Add first rename
+        result = runner.invoke(
+            main,
+            ["add", "--script", str(script), "icechunk<2=icechunk_v1"],
+        )
+        assert result.exit_code == 0
+
+        # Add second rename
+        result = runner.invoke(
+            main,
+            ["add", "--script", str(script), "zarr<3=zarr_v2"],
+        )
+        assert result.exit_code == 0
+
+        # Parse the result — both renames should be found
+        content = script.read_text()
+        renames = parse_all_renames(content)
+        assert len(renames) == 2
+
+        names = {r.new_name for r in renames}
+        assert names == {"icechunk_v1", "zarr_v2"}
+
+        originals = {r.original for r in renames}
+        assert originals == {"icechunk", "zarr"}
+
+        # Dependencies should include both new names and numpy
+        assert '"icechunk_v1"' in content
+        assert '"zarr_v2"' in content
+        assert '"numpy"' in content
+
+    def test_add_update_round_trip(self, tmp_path: Path) -> None:
+        """Add a rename, then update its version, verify only latest remains."""
+        from third_wheel.run import parse_all_renames
+
+        script = tmp_path / "update.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = []
+            # ///
+        """)
+        )
+
+        runner = CliRunner()
+
+        # Add with version <2
+        runner.invoke(
+            main,
+            ["add", "--script", str(script), "icechunk<2=icechunk_v1"],
+        )
+
+        # Update to version <3
+        runner.invoke(
+            main,
+            ["add", "--script", str(script), "icechunk<3=icechunk_v1"],
+        )
+
+        renames = parse_all_renames(script.read_text())
+        assert len(renames) == 1
+        assert renames[0].version == "<3"
+
+    def test_add_to_script_with_comment_annotations_preserves_them(self, tmp_path: Path) -> None:
+        """Adding structured rename to script with comment annotations keeps both."""
+        from third_wheel.run import parse_all_renames
+
+        script = tmp_path / "mixed.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "pandas_v2",  # pandas<2
+            #   "pandas>=2",
+            # ]
+            # ///
+        """)
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["add", "--script", str(script), "zarr<3=zarr_v2"],
+        )
+        assert result.exit_code == 0
+
+        content = script.read_text()
+        renames = parse_all_renames(content)
+
+        # Both the comment-style and structured renames should be found
+        names = {r.new_name for r in renames}
+        assert "pandas_v2" in names
+        assert "zarr_v2" in names
+
+    def test_add_to_script_then_find_links_sync(self, tmp_path: Path) -> None:
+        """Full workflow: add rename to script, create wheel, verify metadata is valid."""
+        # Create a test wheel
+        v1_dir = tmp_path / "wheels"
+        v1_dir.mkdir()
+        v1_wheel = create_test_wheel(v1_dir, "mypkg", "1.0.0")
+
+        # Rename it
+        renamed = rename_wheel(v1_wheel, "mypkg_v1", output_dir=v1_dir)
+        assert renamed.exists()
+
+        # Create a script and add rename via CLI
+        script = tmp_path / "script.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            print("test")
+        """)
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["add", "--script", str(script), "mypkg<2=mypkg_v1"],
+        )
+        assert result.exit_code == 0
+
+        # Verify the script has valid metadata that run module can parse
+        from third_wheel.run import parse_all_renames, parse_pep723_metadata
+
+        content = script.read_text()
+        toml_str = parse_pep723_metadata(content)
+        assert toml_str is not None
+
+        renames = parse_all_renames(content)
+        assert len(renames) == 1
+        assert renames[0].original == "mypkg"
+        assert renames[0].new_name == "mypkg_v1"
+        assert renames[0].version == "<2"
 
 
 # ---------------------------------------------------------------------------
