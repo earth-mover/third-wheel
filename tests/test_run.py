@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from third_wheel.run import (
     RenameSpec,
+    _print_run_dry_run,
     extract_renames_from_comments,
     extract_renames_from_tool_table,
     merge_renames,
@@ -13,6 +16,7 @@ from third_wheel.run import (
     parse_cli_renames,
     parse_pep723_metadata,
     rewrite_script_metadata,
+    run_script,
 )
 
 
@@ -385,3 +389,148 @@ class TestRenameSpec:
     def test_source_field_default_none(self):
         spec = RenameSpec("icechunk", "icechunk_v1")
         assert spec.source is None
+
+
+class TestRunScriptDryRun:
+    """Tests for dry_run mode in run_script."""
+
+    def test_dry_run_no_renames(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """dry_run with no renames prints message and returns 0."""
+        script = tmp_path / "test.py"
+        script.write_text("print('hello')\n")
+        result = run_script(script, dry_run=True)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "No renames detected" in captured.err
+        assert "Would run:" in captured.err
+
+    def test_dry_run_with_renames(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """dry_run with renames shows rename table, cache status, and command."""
+        script = tmp_path / "test.py"
+        script.write_text("""\
+# /// script
+# dependencies = [
+#   "icechunk_v1",  # icechunk<2
+#   "icechunk>=2",
+# ]
+# ///
+print('hello')
+""")
+        result = run_script(script, dry_run=True)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "icechunk" in captured.err
+        assert "icechunk_v1" in captured.err
+        assert "Cache:" in captured.err
+        assert "Would run:" in captured.err
+
+    def test_dry_run_with_cli_renames(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """dry_run shows CLI renames with correct source label."""
+        script = tmp_path / "test.py"
+        script.write_text("print('hello')\n")
+        cli_renames = [RenameSpec("requests", "requests_old", "<2")]
+        result = run_script(script, cli_renames=cli_renames, dry_run=True)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "requests" in captured.err
+        assert "CLI" in captured.err
+
+    def test_dry_run_does_not_create_cache_dir(self, tmp_path: Path) -> None:
+        """dry_run should not create any cache directories."""
+        import os
+
+        os.environ["THIRD_WHEEL_CACHE_DIR"] = str(tmp_path / "cache")
+        try:
+            script = tmp_path / "test.py"
+            script.write_text("""\
+# /// script
+# dependencies = [
+#   "icechunk_v1",  # icechunk<2
+# ]
+# ///
+print('hello')
+""")
+            run_script(script, dry_run=True)
+            # The cache dir should not have been created by dry_run
+            cache_wheels = tmp_path / "cache"
+            # cache_dir itself might not exist, or if it does, no wheels subdir
+            if cache_wheels.exists():
+                assert not list(cache_wheels.rglob("*.whl"))
+        finally:
+            del os.environ["THIRD_WHEEL_CACHE_DIR"]
+
+    def test_dry_run_shows_source_type(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """dry_run shows source type for git/path sources."""
+        script = tmp_path / "test.py"
+        script.write_text("print('hello')\n")
+        cli_renames = [
+            RenameSpec("zarr", "zarr_dev", source="git+https://github.com/org/repo@main"),
+        ]
+        result = run_script(script, cli_renames=cli_renames, dry_run=True)
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "git" in captured.err
+
+
+class TestPrintRunDryRun:
+    """Tests for the _print_run_dry_run helper."""
+
+    def test_cache_hit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Shows cache HIT when expected wheels exist."""
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        (wheel_dir / "icechunk_v1-1.0.0-py3-none-any.whl").touch()
+
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_run_dry_run(
+            renames,
+            [],
+            index_url="https://pypi.org/simple/",
+            python_version=None,
+            wheel_dir=wheel_dir,
+            script_path=Path("test.py"),
+            script_args=None,
+        )
+        captured = capsys.readouterr()
+        assert "Cache: HIT" in captured.err
+
+    def test_cache_miss(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        """Shows cache MISS when wheel dir doesn't exist."""
+        wheel_dir = tmp_path / "nonexistent"
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_run_dry_run(
+            renames,
+            [],
+            index_url="https://pypi.org/simple/",
+            python_version=None,
+            wheel_dir=wheel_dir,
+            script_path=Path("test.py"),
+            script_args=None,
+        )
+        captured = capsys.readouterr()
+        assert "Cache: MISS" in captured.err
+
+    def test_path_source_cache_skip(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Shows cache SKIP for path sources."""
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        (wheel_dir / "zarr_dev-1.0.0-py3-none-any.whl").touch()
+
+        renames = [RenameSpec("zarr", "zarr_dev", source="/path/to/zarr")]
+        _print_run_dry_run(
+            renames,
+            [],
+            index_url="https://pypi.org/simple/",
+            python_version=None,
+            wheel_dir=wheel_dir,
+            script_path=Path("test.py"),
+            script_args=None,
+        )
+        captured = capsys.readouterr()
+        assert "Cache: SKIP" in captured.err

@@ -206,6 +206,7 @@ def sync(
     installer: str | None = None,
     force: bool = False,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> list[Path]:
     """Download, rename, and install wheels into the current virtual environment.
 
@@ -224,9 +225,10 @@ def sync(
             when ``CONDA_PREFIX`` is set, plain ``uv pip install`` otherwise).
         force: If True, re-download and re-rename wheels even if cached.
         verbose: Print extra diagnostic info.
+        dry_run: Print what would happen without downloading, renaming, or installing.
 
     Returns:
-        List of installed wheel paths.
+        List of installed wheel paths (empty for dry-run).
     """
     if not renames:
         return []
@@ -237,6 +239,19 @@ def sync(
     cache_key = rename_cache_key(renames, cache_source, python_version)
     cache = cache_dir() / "sync" / cache_key
     wheel_dir = cache / "wheels"
+
+    if dry_run:
+        _print_sync_dry_run(
+            renames,
+            index_url=index_url,
+            find_links=find_links,
+            python_version=python_version,
+            installer=installer,
+            force=force,
+            wheel_dir=wheel_dir,
+        )
+        return []
+
     wheel_dir.mkdir(parents=True, exist_ok=True)
 
     if verbose:
@@ -314,6 +329,65 @@ def sync(
         raise RuntimeError(f"Failed to install {names}: {result.stderr}")
 
     return renamed_wheels
+
+
+def _print_sync_dry_run(
+    renames: list[RenameSpec],
+    *,
+    index_url: str,
+    find_links: Path | None,
+    python_version: str | None,
+    installer: str | None,
+    force: bool,
+    wheel_dir: Path,
+) -> None:
+    """Print a summary of what ``sync`` would do, without executing anything."""
+    print("Renames:", file=sys.stderr)
+    for spec in renames:
+        ver = spec.version or "(latest)"
+        source = f" from {spec.source}" if spec.source else ""
+        print(
+            f"  {spec.original} {ver} -> {spec.new_name}  [{spec.source_type}]{source}",
+            file=sys.stderr,
+        )
+
+    if find_links:
+        print(f"\nSource: --find-links {find_links}", file=sys.stderr)
+    else:
+        print(f"\nIndex URL: {index_url}", file=sys.stderr)
+    print(f"Python version: {python_version or 'auto'}", file=sys.stderr)
+
+    # Installer detection
+    if installer == "uv":
+        install_cmd = "uv pip install"
+    elif installer == "pip":
+        install_cmd = "pip install"
+    else:
+        detected = _detect_installer()
+        install_cmd = " ".join(detected)
+    print(f"Installer: {install_cmd}", file=sys.stderr)
+
+    # Cache status
+    expected_names = {r.new_name.replace("-", "_") for r in renames}
+    has_path_sources = any(r.source_type == "path" for r in renames)
+
+    if force:
+        print("Cache: FORCE (will re-download)", file=sys.stderr)
+    elif has_path_sources:
+        print("Cache: SKIP (path sources always rebuild)", file=sys.stderr)
+    elif wheel_dir.exists():
+        existing_wheels = list(wheel_dir.glob("*.whl"))
+        cached_names = {w.name.split("-")[0] for w in existing_wheels}
+        if expected_names.issubset(cached_names):
+            print(f"Cache: HIT ({wheel_dir})", file=sys.stderr)
+            for whl in existing_wheels:
+                if whl.name.split("-")[0] in expected_names:
+                    print(f"  {whl.name}", file=sys.stderr)
+        else:
+            missing = expected_names - cached_names
+            print(f"Cache: MISS (missing: {', '.join(sorted(missing))})", file=sys.stderr)
+    else:
+        print("Cache: MISS (no cache directory)", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
