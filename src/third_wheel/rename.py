@@ -154,6 +154,7 @@ def _rename_wheel_files(
     version: str,
     *,
     update_imports: bool = True,
+    patch_strings: bool = False,
 ) -> dict[str, bytes]:
     """Core rename logic: process all files in a wheel ZipFile.
 
@@ -199,9 +200,16 @@ def _rename_wheel_files(
         if new_file_name == f"{new_dist_info}/METADATA":
             new_content = _update_metadata(content, old_name_normalized, new_name)
 
-        # Update Python files (imports)
+        # Update Python files (imports and optionally string references)
         elif update_imports and new_file_name.endswith(".py"):
-            new_content = _update_python_imports(content, old_import_name, new_name_normalized)
+            if patch_strings:
+                from third_wheel.patch import _update_dependency_references
+
+                new_content = _update_dependency_references(
+                    content, old_import_name, new_name_normalized
+                )
+            else:
+                new_content = _update_python_imports(content, old_import_name, new_name_normalized)
 
         # Skip the old RECORD file (we'll generate a new one)
         if name.endswith("/RECORD"):
@@ -231,6 +239,7 @@ def rename_wheel(
     output_dir: Path | None = None,
     *,
     update_imports: bool = True,
+    patch_strings: bool = False,
 ) -> Path:
     """Rename a wheel package.
 
@@ -239,6 +248,9 @@ def rename_wheel(
         new_name: New package name (e.g., "icechunk_v1")
         output_dir: Output directory for the renamed wheel (default: same as input)
         update_imports: Whether to update import statements in Python files
+        patch_strings: Whether to also rewrite string references to the old
+            module name (e.g., ``"zarr.core.foo"`` → ``"zarr_old.core.foo"``).
+            Useful for packages with internal string-based module lookups.
 
     Returns:
         Path to the renamed wheel file
@@ -275,6 +287,7 @@ def rename_wheel(
             new_name_normalized,
             components["version"],
             update_imports=update_imports,
+            patch_strings=patch_strings,
         )
 
     # Write the new wheel
@@ -290,6 +303,7 @@ def rename_wheel_from_bytes(
     new_name: str,
     *,
     update_imports: bool = True,
+    patch_strings: bool = False,
 ) -> bytes:
     """Rename a wheel from bytes (for in-memory processing).
 
@@ -297,6 +311,8 @@ def rename_wheel_from_bytes(
         wheel_bytes: Original wheel file contents as bytes
         new_name: New package name (e.g., "icechunk_v1")
         update_imports: Whether to update import statements in Python files
+        patch_strings: Whether to also rewrite string references to the old
+            module name.
 
     Returns:
         Renamed wheel file contents as bytes
@@ -332,6 +348,7 @@ def rename_wheel_from_bytes(
             new_name_normalized,
             version,
             update_imports=update_imports,
+            patch_strings=patch_strings,
         )
 
     # Write the new wheel to bytes

@@ -138,6 +138,8 @@ def prepare_wheels_from_find_links(
     renames: list[RenameSpec],
     wheel_dir: Path,
     find_links: Path,
+    *,
+    patch_strings: bool = True,
 ) -> None:
     """Rename wheels from a local directory instead of downloading.
 
@@ -157,7 +159,9 @@ def prepare_wheels_from_find_links(
         copied = wheel_dir / source.name
         shutil.copy2(source, copied)
 
-        renamed = rename_wheel(copied, spec.new_name, output_dir=wheel_dir)
+        renamed = rename_wheel(
+            copied, spec.new_name, output_dir=wheel_dir, patch_strings=patch_strings
+        )
         # Remove the copy of the original
         if copied != renamed:
             copied.unlink()

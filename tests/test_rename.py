@@ -298,6 +298,73 @@ class TestRenameWheel:
             # Imports should NOT be rewritten
             assert "from testpkg.core import main" in init
 
+    def test_patch_strings_rewrites_string_literals(self, tmp_path: Path) -> None:
+        """patch_strings=True rewrites string-based module references."""
+        wheel_path = tmp_path / "zarr-3.0.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr("zarr/__init__.py", "from zarr.core import Array\n")
+            zf.writestr(
+                "zarr/core.py",
+                'PIPELINE = "zarr.core.codec_pipeline.BatchedCodecPipeline"\ndef Array(): pass\n',
+            )
+            zf.writestr(
+                "zarr/config.py",
+                "config = {\n"
+                '    "default_pipeline": "zarr.core.codec_pipeline.BatchedCodecPipeline",\n'
+                '    "file_ext": ".zarr",\n'  # should NOT be rewritten
+                "}\n",
+            )
+            zf.writestr(
+                "zarr-3.0.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: zarr\nVersion: 3.0.0\n",
+            )
+            zf.writestr("zarr-3.0.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+            zf.writestr("zarr-3.0.0.dist-info/RECORD", "")
+
+        result = rename_wheel(
+            wheel_path, "zarr_old", output_dir=tmp_path / "out", patch_strings=True
+        )
+
+        with zipfile.ZipFile(result, "r") as zf:
+            core = zf.read("zarr_old/core.py").decode()
+            # String reference should be rewritten
+            assert "zarr_old.core.codec_pipeline.BatchedCodecPipeline" in core
+            assert '"zarr.core.codec_pipeline' not in core
+
+            config = zf.read("zarr_old/config.py").decode()
+            # String reference should be rewritten
+            assert "zarr_old.core.codec_pipeline.BatchedCodecPipeline" in config
+            # File extension .zarr should NOT be rewritten
+            assert '".zarr"' in config
+
+            init = zf.read("zarr_old/__init__.py").decode()
+            # Import should also be rewritten
+            assert "from zarr_old.core import Array" in init
+
+    def test_patch_strings_false_leaves_strings(self, tmp_path: Path) -> None:
+        """patch_strings=False (default) does NOT rewrite string references."""
+        wheel_path = tmp_path / "zarr-3.0.0-py3-none-any.whl"
+        with zipfile.ZipFile(wheel_path, "w") as zf:
+            zf.writestr(
+                "zarr/__init__.py",
+                'PIPELINE = "zarr.core.codec_pipeline"\n',
+            )
+            zf.writestr(
+                "zarr-3.0.0.dist-info/METADATA",
+                "Metadata-Version: 2.1\nName: zarr\nVersion: 3.0.0\n",
+            )
+            zf.writestr("zarr-3.0.0.dist-info/WHEEL", "Wheel-Version: 1.0\n")
+            zf.writestr("zarr-3.0.0.dist-info/RECORD", "")
+
+        result = rename_wheel(
+            wheel_path, "zarr_old", output_dir=tmp_path / "out", patch_strings=False
+        )
+
+        with zipfile.ZipFile(result, "r") as zf:
+            init = zf.read("zarr_old/__init__.py").decode()
+            # String reference should NOT be rewritten (patch_strings=False)
+            assert '"zarr.core.codec_pipeline"' in init
+
 
 class TestParseWheelFilenameEdgeCases:
     def test_too_few_parts(self) -> None:

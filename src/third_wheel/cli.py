@@ -42,11 +42,19 @@ def main() -> None:
     default=False,
     help="Do not update import statements in Python files",
 )
+@click.option(
+    "--patch-strings/--no-patch-strings",
+    default=False,
+    help="Also rewrite string references to the old module name "
+    "(e.g., 'zarr.core.foo' → 'zarr_old.core.foo'). "
+    "Useful for packages with plugin registries or importlib calls.",
+)
 def rename(
     wheel_path: Path,
     new_name: str,
     output: Path | None,
     no_update_imports: bool,
+    patch_strings: bool,
 ) -> None:
     """🛞 Rename a wheel package.
 
@@ -60,6 +68,7 @@ def rename(
                 new_name,
                 output_dir=output,
                 update_imports=not no_update_imports,
+                patch_strings=patch_strings,
             )
 
         console.print(f"[green]🛞 Created:[/green] [bold]{result}[/bold]")
