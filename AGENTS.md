@@ -72,7 +72,9 @@ examples/
 
 ### `rename.py`
 
-- `rename_wheel(wheel_path, new_name, output_dir, update_imports)` - Main entry point
+- `rename_wheel(wheel_path, new_name, output_dir, update_imports)` - Main entry point (file-based)
+- `rename_wheel_from_bytes(wheel_bytes, new_name, update_imports)` - In-memory variant for proxy streaming
+- `_rename_wheel_files(zf, old_name, new_name, new_name_normalized, version)` - Shared core logic for both rename functions
 - `_update_python_imports(content, old_name, new_name)` - Regex-based import rewriting
 - `inspect_wheel(wheel_path)` - Analyze wheel structure, detect extensions
 - `normalize_name(name)` - PEP 503 name normalization (public)
@@ -333,14 +335,14 @@ Issues discovered during deep review (2026-03-10). Mark items DONE as they are f
 
 ### Pre-existing (in main before sync feature)
 
-- [ ] **CRITICAL: `parse_wheel_filename` build tag heuristic** (`rename.py:39-40`) — Checks `parts[2][0].isdigit()` to detect build tags. Should count from end instead (python/abi/platform are always last 3 parts).
-- [ ] **CRITICAL: `rename_wheel_from_bytes` version fallback** (`rename.py:296`) — `rsplit("-", 1)` on dist-info name silently falls back to `"0.0.0"`, producing a corrupt wheel.
-- [ ] **HIGH: Code duplication rename_wheel vs rename_wheel_from_bytes** (`rename.py`) — ~100 lines of identical core logic. Extract a shared helper.
+- [x] **CRITICAL: `parse_wheel_filename` build tag heuristic** (`rename.py`) — Fixed: now counts from end (python/abi/platform are always last 3 parts).
+- [x] **CRITICAL: `rename_wheel_from_bytes` version fallback** (`rename.py`) — Fixed: raises `ValueError` on malformed dist-info instead of silent fallback.
+- [x] **HIGH: Code duplication rename_wheel vs rename_wheel_from_bytes** (`rename.py`) — Fixed: extracted `_rename_wheel_files()` shared helper.
 - [ ] **MEDIUM: `_find_package_dir` misses namespace packages** (`rename.py`) — Only detects packages with `__init__.py`, missing PEP 420 implicit namespace packages.
 - [x] **MEDIUM: `_has_server_extras()` is dead code** (`run.py:320-328`) — Never called. Removed.
-- [ ] **LOW: `inspect_wheel` stores booleans as strings** (`rename.py:411`) — `"True"/"False"` strings instead of proper bools.
-- [ ] **TEST: `rename_wheel_from_bytes`** — Zero tests for this public function.
-- [ ] **TEST: `inspect_wheel`** — Zero tests for this public function.
+- [x] **LOW: `inspect_wheel` stores booleans as strings** (`rename.py`) — Fixed: now uses proper booleans.
+- [x] **TEST: `rename_wheel_from_bytes`** — Added `TestRenameWheelFromBytes` (5 tests).
+- [x] **TEST: `inspect_wheel`** — Added `TestInspectWheel` (4 tests).
 - [ ] **TEST: `run_script`** — Zero unit tests for core orchestration.
 
 ### New (introduced with sync feature)
@@ -351,13 +353,13 @@ Issues discovered during deep review (2026-03-10). Mark items DONE as they are f
 - [x] **MEDIUM: `_detect_installer` no existence check** (`sync.py`) — Fixed: falls back to default `uv pip install` when neither conda python path exists.
 - [x] **MEDIUM: `cache_clean_cmd` mutual exclusion check after early return** (`cli.py`) — Fixed: validation moved before cache existence check.
 - [x] **MEDIUM: `get_pyproject_config` catches bare Exception** (`sync.py`) — Fixed: now catches only `TOMLDecodeError`.
-- [ ] **MEDIUM: `cache_dir()` ignores XDG_CACHE_HOME** (`run.py:331-339`) — Falls back to `~/.cache/` directly instead of respecting `$XDG_CACHE_HOME`.
+- [x] **MEDIUM: `cache_dir()` ignores XDG_CACHE_HOME** (`run.py`) — Fixed: now respects `$XDG_CACHE_HOME`.
 - [x] **LOW: Inconsistent error emoji across CLI commands** — Fixed: all commands now use `🔧 Error:`.
 - [x] **LOW: `sync_cmd` source attribution wrong** (`cli.py`) — Fixed: checks `new_name` in CLI set instead of using dataclass `in`.
-- [ ] **TEST: `cache_dir()` env var override** — No test for `THIRD_WHEEL_CACHE_DIR`.
-- [ ] **TEST: `rename_cache_key()` stability** — No test for hash stability or collision properties.
-- [ ] **TEST: `parse_wheel_filename` invalid inputs** — No negative test cases.
-- [ ] **TEST: `rename_wheel(update_imports=False)`** — Untested flag.
+- [x] **TEST: `cache_dir()` env var override** — Added `TestCacheDir` (4 tests: default, env override, XDG, priority).
+- [x] **TEST: `rename_cache_key()` stability** — Added `TestRenameCacheKey` (5 tests: stable, differs on version/index/python, order-independent).
+- [x] **TEST: `parse_wheel_filename` invalid inputs** — Added `TestParseWheelFilenameEdgeCases` (3 tests).
+- [x] **TEST: `rename_wheel(update_imports=False)`** — Added test in `TestRenameWheel`.
 
 ## Documentation Updates Are Required With Every Commit
 
