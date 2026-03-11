@@ -29,10 +29,12 @@ from third_wheel.rename import rename_wheel
 from third_wheel.run import RenameSpec
 from third_wheel.sync import (
     _find_wheel_in_directory,
+    _print_sync_dry_run,
     add_rename_to_pyproject,
     add_rename_to_script,
     get_pyproject_config,
     parse_renames_from_pyproject,
+    sync,
 )
 
 # ---------------------------------------------------------------------------
@@ -2426,3 +2428,129 @@ class TestPixiIntegration:
         result = self._pixi_run(pixi_env, ["python", "-c", check_code])
         assert result.returncode == 0, f"Dual import failed: {result.stderr}\n{result.stdout}"
         assert "PASS" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Dry-run tests
+# ---------------------------------------------------------------------------
+
+
+class TestSyncDryRun:
+    """Tests for dry_run mode in sync()."""
+
+    def test_dry_run_returns_empty(self) -> None:
+        """sync(dry_run=True) returns an empty list."""
+        renames = [RenameSpec("requests", "requests_old", "<2")]
+        result = sync(renames, dry_run=True)
+        assert result == []
+
+    def test_dry_run_does_not_create_cache(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """sync(dry_run=True) should not create cache directories."""
+        cache = tmp_path / "cache"
+        monkeypatch.setenv("THIRD_WHEEL_CACHE_DIR", str(cache))
+        renames = [RenameSpec("requests", "requests_old", "<2")]
+        sync(renames, dry_run=True)
+        # sync subdirectory should not have been created
+        assert not (cache / "sync").exists()
+
+    def test_dry_run_does_not_call_subprocess(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """sync(dry_run=True) should not invoke pip/uv install."""
+        calls: list[Any] = []
+        monkeypatch.setattr(subprocess, "run", lambda *a, **_kw: calls.append(a))
+        renames = [RenameSpec("requests", "requests_old", "<2")]
+        sync(renames, dry_run=True)
+        assert len(calls) == 0
+
+
+class TestPrintSyncDryRun:
+    """Tests for the _print_sync_dry_run helper."""
+
+    def test_shows_renames(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_sync_dry_run(
+            renames,
+            index_url="https://pypi.org/simple/",
+            find_links=None,
+            python_version=None,
+            installer=None,
+            force=False,
+            wheel_dir=tmp_path / "wheels",
+        )
+        captured = capsys.readouterr()
+        assert "icechunk" in captured.err
+        assert "icechunk_v1" in captured.err
+        assert "Installer:" in captured.err
+
+    def test_shows_find_links(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_sync_dry_run(
+            renames,
+            index_url="https://pypi.org/simple/",
+            find_links=tmp_path / "my_wheels",
+            python_version=None,
+            installer=None,
+            force=False,
+            wheel_dir=tmp_path / "wheels",
+        )
+        captured = capsys.readouterr()
+        assert "--find-links" in captured.err
+        assert "my_wheels" in captured.err
+
+    def test_shows_force(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_sync_dry_run(
+            renames,
+            index_url="https://pypi.org/simple/",
+            find_links=None,
+            python_version=None,
+            installer=None,
+            force=True,
+            wheel_dir=tmp_path / "wheels",
+        )
+        captured = capsys.readouterr()
+        assert "FORCE" in captured.err
+
+    def test_cache_hit(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        wheel_dir = tmp_path / "wheels"
+        wheel_dir.mkdir()
+        (wheel_dir / "icechunk_v1-1.0.0-py3-none-any.whl").touch()
+
+        renames = [RenameSpec("icechunk", "icechunk_v1", "<2")]
+        _print_sync_dry_run(
+            renames,
+            index_url="https://pypi.org/simple/",
+            find_links=None,
+            python_version=None,
+            installer=None,
+            force=False,
+            wheel_dir=wheel_dir,
+        )
+        captured = capsys.readouterr()
+        assert "Cache: HIT" in captured.err
+
+
+class TestSyncDryRunCLI:
+    """Tests for --dry-run flag in the sync CLI command."""
+
+    def test_sync_dry_run_flag(self, tmp_path: Path) -> None:
+        """'third-wheel sync --dry-run' prints info without installing."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "testproject"
+
+            [tool.third-wheel]
+            renames = [
+                {original = "requests", new-name = "requests_old", version = "<2"},
+            ]
+        """)
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["sync", "--dry-run", "-p", str(pyproject)])
+        # Should succeed (no error exit)
+        assert result.exit_code == 0, f"Output: {result.output}"
+        # Should NOT print "Synced" since nothing was installed
+        assert "Synced" not in result.output

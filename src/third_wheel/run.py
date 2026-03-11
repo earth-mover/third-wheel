@@ -388,6 +388,7 @@ def run_script(
     python_version: str | None = None,
     script_args: list[str] | None = None,
     verbose: bool = False,
+    dry_run: bool = False,
 ) -> int:
     """Run a PEP 723 script with third-wheel rename support.
 
@@ -402,19 +403,23 @@ def run_script(
         python_version: Target Python version
         script_args: Arguments to pass to the script
         verbose: Print extra info
+        dry_run: Print what would happen without downloading, renaming, or running
 
     Returns:
-        Exit code from the script
+        Exit code from the script (0 for dry-run)
     """
     script_text = script_path.read_text()
     script_renames = parse_all_renames(script_text)
     all_renames = merge_renames(script_renames, cli_renames or [])
 
     if not all_renames:
-        # No renames needed — just delegate to uv run directly
         cmd = ["uv", "run", str(script_path)]
         if script_args:
             cmd.extend(script_args)
+        if dry_run:
+            print("No renames detected.", file=sys.stderr)
+            print(f"Would run: {' '.join(cmd)}", file=sys.stderr)
+            return 0
         result = subprocess.run(cmd)
         return result.returncode
 
@@ -423,6 +428,19 @@ def run_script(
     cache_key = rename_cache_key(all_renames, index_url, python_version)
     cache = cache_dir() / cache_key
     wheel_dir = cache / "wheels"
+
+    if dry_run:
+        _print_run_dry_run(
+            all_renames,
+            cli_renames or [],
+            index_url=index_url,
+            python_version=python_version,
+            wheel_dir=wheel_dir,
+            script_path=script_path,
+            script_args=script_args,
+        )
+        return 0
+
     wheel_dir.mkdir(parents=True, exist_ok=True)
 
     if verbose:
@@ -475,3 +493,55 @@ def run_script(
 
     result = subprocess.run(cmd)
     return result.returncode
+
+
+def _print_run_dry_run(
+    all_renames: list[RenameSpec],
+    cli_renames: list[RenameSpec],
+    *,
+    index_url: str,
+    python_version: str | None,
+    wheel_dir: Path,
+    script_path: Path,
+    script_args: list[str] | None,
+) -> None:
+    """Print a summary of what ``run_script`` would do, without executing anything."""
+    cli_new_names = {r.new_name for r in cli_renames}
+
+    print("Renames:", file=sys.stderr)
+    for spec in all_renames:
+        origin = "CLI" if spec.new_name in cli_new_names else "script"
+        ver = spec.version or "(latest)"
+        source = f" from {spec.source}" if spec.source else ""
+        print(
+            f"  {spec.original} {ver} -> {spec.new_name}  [{origin}, {spec.source_type}]{source}",
+            file=sys.stderr,
+        )
+
+    print(f"\nIndex URL: {index_url}", file=sys.stderr)
+    print(f"Python version: {python_version or 'auto'}", file=sys.stderr)
+
+    # Check cache status
+    if wheel_dir.exists():
+        existing_wheels = list(wheel_dir.glob("*.whl"))
+        expected_names = {r.new_name.replace("-", "_") for r in all_renames}
+        cached_names = {w.name.split("-")[0] for w in existing_wheels}
+        has_path_sources = any(r.source_type == "path" for r in all_renames)
+        if has_path_sources:
+            print("Cache: SKIP (path sources always rebuild)", file=sys.stderr)
+        elif expected_names.issubset(cached_names):
+            print(f"Cache: HIT ({wheel_dir})", file=sys.stderr)
+            for whl in existing_wheels:
+                if whl.name.split("-")[0] in expected_names:
+                    print(f"  {whl.name}", file=sys.stderr)
+        else:
+            missing = expected_names - cached_names
+            print(f"Cache: MISS (missing: {', '.join(sorted(missing))})", file=sys.stderr)
+    else:
+        print("Cache: MISS (no cache directory)", file=sys.stderr)
+
+    # Show the command that would run
+    cmd = ["uv", "run", "--find-links", str(wheel_dir), str(script_path)]
+    if script_args:
+        cmd.extend(script_args)
+    print(f"\nWould run: {' '.join(cmd)}", file=sys.stderr)

@@ -501,6 +501,12 @@ def serve(
     default=False,
     help="Print extra diagnostic info",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would happen without downloading, renaming, or running",
+)
 @click.argument("script_args", nargs=-1, type=click.UNPROCESSED)
 def run(
     script: Path,
@@ -508,6 +514,7 @@ def run(
     index_url: str,
     python_version: str | None,
     verbose: bool,
+    dry_run: bool,
     script_args: tuple[str, ...],
 ) -> None:
     """Run a PEP 723 inline script with multi-version package support.
@@ -598,6 +605,7 @@ def run(
             python_version=python_version,
             script_args=list(script_args),
             verbose=verbose,
+            dry_run=dry_run,
         )
 
         sys.exit(exit_code)
@@ -666,6 +674,12 @@ def run(
     default=False,
     help="Print extra diagnostic info",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would happen without downloading, renaming, or installing",
+)
 def sync_cmd(
     renames: tuple[str, ...],
     index_url: str | None,
@@ -675,6 +689,7 @@ def sync_cmd(
     installer: str,
     force: bool,
     verbose: bool,
+    dry_run: bool,
 ) -> None:
     """Install renamed packages into the current virtual environment.
 
@@ -798,8 +813,8 @@ def sync_cmd(
 
         # Run sync
         resolved_installer = installer if installer != "auto" else None
-        with console.status("[bold blue]Syncing renamed packages..."):
-            installed = sync(
+        if dry_run:
+            sync(
                 all_renames,
                 index_url=resolved_index,
                 find_links=find_links,
@@ -807,12 +822,24 @@ def sync_cmd(
                 installer=resolved_installer,
                 force=force,
                 verbose=verbose,
+                dry_run=True,
             )
+        else:
+            with console.status("[bold blue]Syncing renamed packages..."):
+                installed = sync(
+                    all_renames,
+                    index_url=resolved_index,
+                    find_links=find_links,
+                    python_version=python_version,
+                    installer=resolved_installer,
+                    force=force,
+                    verbose=verbose,
+                )
 
-        for wheel in installed:
-            console.print(f"[green]Installed:[/green] [bold]{wheel.name}[/bold]")
+            for wheel in installed:
+                console.print(f"[green]Installed:[/green] [bold]{wheel.name}[/bold]")
 
-        console.print(f"[green]Synced {len(installed)} renamed package(s).[/green]")
+            console.print(f"[green]Synced {len(installed)} renamed package(s).[/green]")
 
     except Exception as e:
         err_console.print(f"[red]🔧 Error:[/red] {e}")
