@@ -299,6 +299,8 @@ def prepare_wheels(
     wheel_dir: Path,
     index_url: str,
     python_version: str | None,
+    *,
+    patch_strings: bool = True,
 ) -> None:
     """Download (or build from source) and rename wheels for all rename specs.
 
@@ -307,6 +309,9 @@ def prepare_wheels(
         wheel_dir: Directory to place renamed wheels
         index_url: Package index URL
         python_version: Target Python version
+        patch_strings: Whether to rewrite string references to the old module
+            name in Python source files (default: True). Needed for packages
+            that use string-based module lookups like plugin registries.
     """
     from third_wheel.rename import rename_wheel
 
@@ -335,7 +340,9 @@ def prepare_wheels(
             source_desc = spec.source or spec.version_spec
             raise RuntimeError(f"Could not find/build a compatible wheel for {source_desc}")
 
-        renamed = rename_wheel(downloaded, spec.new_name, output_dir=wheel_dir)
+        renamed = rename_wheel(
+            downloaded, spec.new_name, output_dir=wheel_dir, patch_strings=patch_strings
+        )
         # Remove the original (un-renamed) wheel
         if downloaded != renamed:
             downloaded.unlink()
