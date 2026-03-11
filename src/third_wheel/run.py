@@ -317,17 +317,6 @@ def prepare_wheels(
             downloaded.unlink()
 
 
-def _has_server_extras() -> bool:
-    """Check if the server extras (fastapi, uvicorn) are available."""
-    try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
-
-        return True
-    except ImportError:
-        return False
-
-
 def cache_dir() -> Path:
     """Return the third-wheel cache directory.
 

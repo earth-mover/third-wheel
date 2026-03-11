@@ -73,7 +73,7 @@ def get_pyproject_config(pyproject_path: Path) -> dict[str, str]:
 
     try:
         data: dict[str, object] = tomllib.loads(pyproject_path.read_text())
-    except Exception:
+    except tomllib.TOMLDecodeError:
         return {}
 
     tool_section = data.get("tool")
@@ -186,6 +186,9 @@ def _detect_installer() -> list[str]:
         if not conda_python.exists():
             # Windows fallback
             conda_python = Path(conda_prefix) / "python.exe"
+        if not conda_python.exists():
+            # Neither path exists — fall back to default uv pip install
+            return ["uv", "pip", "install"]
         return ["uv", "pip", "install", "--python", str(conda_python)]
     return ["uv", "pip", "install"]
 
@@ -333,23 +336,31 @@ def add_rename_to_pyproject(
     version_part = f', version = "{spec.version}"' if spec.version else ""
     entry = f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}}}'
 
-    if _TOOL_SECTION_RE.search(content):
-        # Section exists — check if this new_name is already there
-        # Look for an existing entry with the same new-name
+    m_section = _TOOL_SECTION_RE.search(content)
+    if m_section:
+        # Determine the extent of the [tool.third-wheel] section
+        # (ends at the next [section] header or EOF)
+        next_section = re.search(r"^\[", content[m_section.end() :], re.MULTILINE)
+        section_end = m_section.end() + next_section.start() if next_section else len(content)
+        section_text = content[m_section.end() : section_end]
+
+        # Check if this new_name already exists within the section
         existing_pattern = re.compile(
             r'\{[^}]*new-name\s*=\s*"' + re.escape(spec.new_name) + r'"[^}]*\}',
         )
-        if existing_pattern.search(content):
-            # Replace the existing entry
-            content = existing_pattern.sub(entry, content)
+        existing_match = existing_pattern.search(section_text)
+        if existing_match:
+            # Replace the existing entry (adjust offset to full content)
+            abs_start = m_section.end() + existing_match.start()
+            abs_end = m_section.end() + existing_match.end()
+            content = content[:abs_start] + entry + content[abs_end:]
         else:
-            # Append to the renames list
-            # Find the renames = [ ... ] and add before the closing ]
+            # Append to the renames list within the section
             renames_pattern = re.compile(
                 r"(renames\s*=\s*\[)(.*?)(\])",
                 re.DOTALL,
             )
-            m = renames_pattern.search(content)
+            m = renames_pattern.search(section_text)
             if m:
                 # Add the new entry before the closing ]
                 existing_entries = m.group(2).rstrip()
@@ -360,11 +371,12 @@ def add_rename_to_pyproject(
                 else:
                     separator = "\n    "
                 new_entries = f"{existing_entries}{separator}{entry},\n"
-                content = content[: m.start(2)] + new_entries + content[m.end(2) :]
+                # Adjust offset to full content
+                abs_start = m_section.end() + m.start(2)
+                abs_end = m_section.end() + m.end(2)
+                content = content[:abs_start] + new_entries + content[abs_end:]
             else:
                 # Section exists but no renames key — add it
-                m_section = _TOOL_SECTION_RE.search(content)
-                assert m_section is not None
                 insert_pos = m_section.end()
                 content = (
                     content[:insert_pos]

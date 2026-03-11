@@ -594,7 +594,7 @@ def run(
         sys.exit(exit_code)
 
     except Exception as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]🔧 Error:[/red] {e}")
         sys.exit(1)
 
 
@@ -740,12 +740,19 @@ def sync_cmd(
         pyproject_renames: list[RenameSpec] = []
         pyproject_config: dict[str, str] = {}
 
+        explicitly_provided = pyproject_path is not None
         if pyproject_path is None:
             # Auto-detect: look in current dir and parents
             for candidate in [Path("pyproject.toml"), Path("../pyproject.toml")]:
                 if candidate.exists():
                     pyproject_path = candidate
                     break
+
+        if pyproject_path and not pyproject_path.exists():
+            if explicitly_provided:
+                err_console.print(f"[red]🔧 Error:[/red] {pyproject_path} not found.")
+                sys.exit(1)
+            pyproject_path = None
 
         if pyproject_path and pyproject_path.exists():
             pyproject_renames = parse_renames_from_pyproject(pyproject_path)
@@ -770,9 +777,10 @@ def sync_cmd(
         resolved_index = index_url or pyproject_config.get("index_url", "https://pypi.org/simple/")
 
         # Show what we're doing
+        cli_new_names = {r.new_name for r in cli_rename_specs}
         for spec in all_renames:
             ver = f" ({spec.version})" if spec.version else ""
-            source = "pyproject.toml" if spec in pyproject_renames else "CLI"
+            source = "CLI" if spec.new_name in cli_new_names else "pyproject.toml"
             console.print(
                 f"  [dim]{source}:[/dim] {spec.original}{ver} -> [bold]{spec.new_name}[/bold]"
             )
@@ -796,7 +804,7 @@ def sync_cmd(
         console.print(f"[green]Synced {len(installed)} renamed package(s).[/green]")
 
     except Exception as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]🔧 Error:[/red] {e}")
         sys.exit(1)
 
 
@@ -855,13 +863,13 @@ def add_cmd(
         # With a specific index
         third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/.../simple
     """
-    from third_wheel.sync import add_rename_to_pyproject, sync
+    from third_wheel.sync import add_rename_to_pyproject, get_pyproject_config, sync
 
     try:
         # Parse the rename spec
         specs = parse_cli_renames([rename_spec])
         if not specs:
-            err_console.print("[red]Error:[/red] Could not parse rename spec.")
+            err_console.print("[red]🔧 Error:[/red] Could not parse rename spec.")
             sys.exit(1)
         spec = specs[0]
 
@@ -871,7 +879,7 @@ def add_cmd(
 
         if not pyproject_path.exists():
             err_console.print(
-                f"[red]Error:[/red] {pyproject_path} not found. "
+                f"[red]🔧 Error:[/red] {pyproject_path} not found. "
                 "Run this from your project root or use -p."
             )
             sys.exit(1)
@@ -887,7 +895,10 @@ def add_cmd(
 
         # Optionally sync
         if run_sync:
-            resolved_index = index_url or "https://pypi.org/simple/"
+            pyproject_config = get_pyproject_config(pyproject_path)
+            resolved_index = index_url or pyproject_config.get(
+                "index_url", "https://pypi.org/simple/"
+            )
             with console.status("[bold blue]Syncing renamed packages..."):
                 installed = sync(
                     [spec],
@@ -898,7 +909,7 @@ def add_cmd(
                 console.print(f"[green]Installed:[/green] [bold]{wheel.name}[/bold]")
 
     except Exception as e:
-        err_console.print(f"[red]Error:[/red] {e}")
+        err_console.print(f"[red]🔧 Error:[/red] {e}")
         sys.exit(1)
 
 
@@ -945,14 +956,14 @@ def cache_clean_cmd(
 
     from third_wheel.run import cache_dir
 
+    if sync_only and run_only:
+        err_console.print("[red]🔧 Error:[/red] Cannot use both --sync-only and --run-only")
+        sys.exit(1)
+
     root = cache_dir()
     if not root.exists():
         console.print("[dim]Cache directory does not exist — nothing to clean.[/dim]")
         return
-
-    if sync_only and run_only:
-        err_console.print("[red]Error:[/red] Cannot use both --sync-only and --run-only")
-        sys.exit(1)
 
     if sync_only:
         target = root / "sync"

@@ -336,7 +336,7 @@ Issues discovered during deep review (2026-03-10). Mark items DONE as they are f
 - [ ] **CRITICAL: `rename_wheel_from_bytes` version fallback** (`rename.py:296`) — `rsplit("-", 1)` on dist-info name silently falls back to `"0.0.0"`, producing a corrupt wheel.
 - [ ] **HIGH: Code duplication rename_wheel vs rename_wheel_from_bytes** (`rename.py`) — ~100 lines of identical core logic. Extract a shared helper.
 - [ ] **MEDIUM: `_find_package_dir` misses namespace packages** (`rename.py`) — Only detects packages with `__init__.py`, missing PEP 420 implicit namespace packages.
-- [ ] **MEDIUM: `_has_server_extras()` is dead code** (`run.py:320-328`) — Never called. Remove it.
+- [x] **MEDIUM: `_has_server_extras()` is dead code** (`run.py:320-328`) — Never called. Removed.
 - [ ] **LOW: `inspect_wheel` stores booleans as strings** (`rename.py:411`) — `"True"/"False"` strings instead of proper bools.
 - [ ] **TEST: `rename_wheel_from_bytes`** — Zero tests for this public function.
 - [ ] **TEST: `inspect_wheel`** — Zero tests for this public function.
@@ -344,15 +344,15 @@ Issues discovered during deep review (2026-03-10). Mark items DONE as they are f
 
 ### New (introduced with sync feature)
 
-- [ ] **HIGH: `add_rename_to_pyproject` regex not section-scoped** (`sync.py:345-358`) — The `renames = [...]` regex matches first occurrence anywhere in TOML, not just within `[tool.third-wheel]`. Could corrupt unrelated sections.
-- [ ] **HIGH: `sync_cmd` silently ignores missing explicit `--pyproject`** (`cli.py:750`) — Unlike `add_cmd` which errors, `sync_cmd` silently skips. Should error when explicitly provided.
-- [ ] **HIGH: `add_cmd --sync` drops options** (`cli.py:891-898`) — Only passes `index_url` and `verbose` to `sync()`, ignoring `find_links`, `python_version`, `installer`, `force`.
-- [ ] **MEDIUM: `_detect_installer` no existence check** (`sync.py:186-190`) — Falls through to Windows path without verifying either path exists.
-- [ ] **MEDIUM: `cache_clean_cmd` mutual exclusion check after early return** (`cli.py:951-956`) — Both flags + empty cache = silent success instead of error.
-- [ ] **MEDIUM: `get_pyproject_config` catches bare Exception** (`sync.py:76`) — Silently swallows permission errors etc. Should catch only `TOMLDecodeError`.
+- [x] **HIGH: `add_rename_to_pyproject` regex not section-scoped** (`sync.py`) — Fixed: regex searches now scoped to after `[tool.third-wheel]` header, bounded by next section.
+- [x] **HIGH: `sync_cmd` silently ignores missing explicit `--pyproject`** (`cli.py`) — Fixed: errors when explicitly provided path doesn't exist.
+- [x] **HIGH: `add_cmd --sync` drops options** (`cli.py`) — Fixed: now reads pyproject config for index-url (matching `sync_cmd` behavior).
+- [x] **MEDIUM: `_detect_installer` no existence check** (`sync.py`) — Fixed: falls back to default `uv pip install` when neither conda python path exists.
+- [x] **MEDIUM: `cache_clean_cmd` mutual exclusion check after early return** (`cli.py`) — Fixed: validation moved before cache existence check.
+- [x] **MEDIUM: `get_pyproject_config` catches bare Exception** (`sync.py`) — Fixed: now catches only `TOMLDecodeError`.
 - [ ] **MEDIUM: `cache_dir()` ignores XDG_CACHE_HOME** (`run.py:331-339`) — Falls back to `~/.cache/` directly instead of respecting `$XDG_CACHE_HOME`.
-- [ ] **LOW: Inconsistent error emoji across CLI commands** — `run`/`sync`/`add` use `Error:` while `rename`/`patch` etc. use `🔧 Error:`.
-- [ ] **LOW: `sync_cmd` source attribution wrong** (`cli.py:776`) — Uses dataclass `in` which matches by value, mislabeling CLI renames as pyproject.
+- [x] **LOW: Inconsistent error emoji across CLI commands** — Fixed: all commands now use `🔧 Error:`.
+- [x] **LOW: `sync_cmd` source attribution wrong** (`cli.py`) — Fixed: checks `new_name` in CLI set instead of using dataclass `in`.
 - [ ] **TEST: `cache_dir()` env var override** — No test for `THIRD_WHEEL_CACHE_DIR`.
 - [ ] **TEST: `rename_cache_key()` stability** — No test for hash stability or collision properties.
 - [ ] **TEST: `parse_wheel_filename` invalid inputs** — No negative test cases.
