@@ -29,3 +29,19 @@ Tracker for bugs, tech debt, and missing test coverage. Mark items with `[x]` as
 - [x] **TEST: `rename_cache_key()` stability** — Added `TestRenameCacheKey` (5 tests: stable, differs on version/index/python, order-independent).
 - [x] **TEST: `parse_wheel_filename` invalid inputs** — Added `TestParseWheelFilenameEdgeCases` (3 tests).
 - [x] **TEST: `rename_wheel(update_imports=False)`** — Added test in `TestRenameWheel`.
+
+## Round 2 review (2026-03-10)
+
+- [x] **CRITICAL: XSS in `server/html.py`** — Fixed: all user-controlled values now escaped with `html.escape()`.
+- [x] **CRITICAL: UnicodeDecodeError in rename.py and patch.py** — Fixed: `.decode("utf-8")` now wrapped in try/except, skips non-UTF8 files.
+- [x] **HIGH: Broad `except Exception` in `run.py`** — Fixed: now catches `(TOMLDecodeError, ValueError, KeyError)`.
+- [x] **HIGH: Broad `except Exception` in `upstream.py`** — Fixed: now catches `(ValueError, TypeError)`.
+- [x] **HIGH: Swallowed HTTP errors in `upstream.py`** — Fixed: now logs warnings via `logging`.
+- [x] **HIGH: Fragile filename rewriting in `stream.py`** — Fixed: now uses `parse_wheel_filename()` from rename.py.
+- [x] **MEDIUM: Type annotations in `_find_package_dir`** — Fixed: added explicit `set[str]` and `dict[str, int]` annotations.
+- [ ] **MEDIUM: `_find_package_dir` misses namespace packages** — Needs research; uncommon in wheels.
+- [ ] **MEDIUM: METADATA not patched in `patch.py`** — Requires-Dist entries not updated when patching.
+- [ ] **HIGH: `serve` command missing from README** — No user-facing documentation for proxy server.
+- [ ] **TEST: `run_script`** — Zero unit tests for core orchestration.
+- [ ] **TEST: Missing server passthrough endpoint tests**
+- [ ] **DOCS: `sync.py` functions missing from architecture.md, `test_sync.py` missing from testing.md**

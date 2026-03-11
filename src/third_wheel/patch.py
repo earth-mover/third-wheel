@@ -49,7 +49,10 @@ def _update_dependency_references(content: bytes, old_name: str, new_name: str) 
 
     Uses a negative lookbehind for ``.`` to avoid rewriting file extensions.
     """
-    text = content.decode("utf-8")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content  # Binary or non-UTF8 file, skip
     text = re.sub(rf"(?<!\.)\b{re.escape(old_name)}\b", new_name, text)
     return text.encode("utf-8")
 

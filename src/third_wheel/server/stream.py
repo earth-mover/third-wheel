@@ -87,12 +87,17 @@ def rewrite_wheel_filename(filename: str, original_name: str, new_name: str) -> 
     Returns:
         Rewritten filename
     """
-    # Wheel filenames are: {distribution}-{version}(-{build})?-{python}-{abi}-{platform}.whl
-    # Replace the distribution (first part before first hyphen that's followed by a digit)
-    parts = filename.split("-")
-    if parts[0].lower().replace("_", "-") == original_name.lower().replace("_", "-"):
-        parts[0] = new_name
-    return "-".join(parts)
+    from third_wheel.rename import _build_wheel_filename, normalize_name, parse_wheel_filename
+
+    try:
+        components = parse_wheel_filename(filename)
+    except ValueError:
+        # Fall back to simple replacement if filename can't be parsed
+        return filename.replace(f"{original_name}-", f"{new_name}-", 1)
+
+    if normalize_name(components["distribution"]) == normalize_name(original_name):
+        components["distribution"] = normalize_name(new_name)
+    return _build_wheel_filename(components)
 
 
 def original_filename_from_renamed(renamed_filename: str, original_name: str, new_name: str) -> str:
@@ -106,8 +111,13 @@ def original_filename_from_renamed(renamed_filename: str, original_name: str, ne
     Returns:
         Original filename
     """
-    # Reverse of rewrite_wheel_filename
-    parts = renamed_filename.split("-")
-    if parts[0].lower().replace("_", "-") == new_name.lower().replace("_", "-"):
-        parts[0] = original_name
-    return "-".join(parts)
+    from third_wheel.rename import _build_wheel_filename, normalize_name, parse_wheel_filename
+
+    try:
+        components = parse_wheel_filename(renamed_filename)
+    except ValueError:
+        return renamed_filename.replace(f"{new_name}-", f"{original_name}-", 1)
+
+    if normalize_name(components["distribution"]) == normalize_name(new_name):
+        components["distribution"] = normalize_name(original_name)
+    return _build_wheel_filename(components)
