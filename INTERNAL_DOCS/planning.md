@@ -26,6 +26,14 @@ Record architectural decisions here with date, context, and rationale so future 
 
 Leave notes here for the next session. Newest entries at the top.
 
+### 2026-03-10 — Tech debt PR merged, v0.2.0 released
+
+- Merged PR #10 (fix/rename-tech-debt) into main: parse_wheel_filename fix, shared helper extraction, inspect bools, XDG cache, 17 new tests.
+- Merged PR #9 (sync/add/cache-clean commands) earlier in the session.
+- Released v0.2.0 via GitHub Release (triggers PyPI publish).
+- Restructured docs: AGENTS.md is now high-level rules linking to CLAUDE.md. Detailed docs in INTERNAL_DOCS/.
+- Next session should tackle the two remaining open items below.
+
 ### 2026-03-10 — Documentation reorganization
 
 - Reviewed and organized all `INTERNAL_DOCS/` files for consistency (headings, descriptions, no duplication).
