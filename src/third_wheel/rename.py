@@ -12,12 +12,12 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-def _normalize_name(name: str) -> str:
+def normalize_name(name: str) -> str:
     """Normalize a package name according to PEP 503."""
     return re.sub(r"[-_.]+", "_", name).lower()
 
 
-def _compute_record_hash(data: bytes) -> str:
+def compute_record_hash(data: bytes) -> str:
     """Compute SHA256 hash in RECORD format (base64 urlsafe, no padding)."""
     import base64
 
@@ -25,7 +25,7 @@ def _compute_record_hash(data: bytes) -> str:
     return "sha256=" + base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-def _parse_wheel_filename(filename: str) -> dict[str, str]:
+def parse_wheel_filename(filename: str) -> dict[str, str]:
     """Parse a wheel filename into its components.
 
     Format: {distribution}-{version}(-{build})?-{python}-{abi}-{platform}.whl
@@ -112,6 +112,45 @@ def _update_python_imports(content: bytes, old_name: str, new_name: str) -> byte
     return text.encode("utf-8")
 
 
+def _find_package_dir(namelist: list[str], dist_name: str, version: str) -> str | None:
+    """Find the actual top-level package directory inside a wheel.
+
+    Some packages have a different import name than their distribution name
+    (e.g., scikit-image -> skimage, Pillow -> PIL, opencv-python -> cv2).
+    This function discovers the real package directory by excluding known
+    non-package directories (dist-info, data).
+
+    Returns the package directory name if it differs from dist_name, or None
+    if they match.
+    """
+    dist_info = f"{dist_name}-{version}.dist-info"
+    data_dir = f"{dist_name}-{version}.data"
+
+    # If the distribution name is already a top-level dir, no mismatch
+    if any(n.startswith(f"{dist_name}/") for n in namelist):
+        return None
+
+    # Find top-level directories that have __init__.py (Python packages)
+    init_files = {name for name in namelist if name.endswith("/__init__.py")}
+    pkg_dirs = set()
+    for name in init_files:
+        top = name.split("/")[0]
+        if top != dist_info and top != data_dir:
+            pkg_dirs.add(top)
+
+    if len(pkg_dirs) == 1:
+        return pkg_dirs.pop()
+
+    # Multiple packages — pick the one with the most files
+    if pkg_dirs:
+        dir_counts = {}
+        for d in pkg_dirs:
+            dir_counts[d] = sum(1 for n in namelist if n.startswith(f"{d}/"))
+        return max(dir_counts, key=dir_counts.get)  # type: ignore[arg-type]
+
+    return None
+
+
 def rename_wheel(
     wheel_path: Path,
     new_name: str,
@@ -137,10 +176,10 @@ def rename_wheel(
         raise ValueError(f"Not a wheel file: {wheel_path}")
 
     # Parse the original wheel filename
-    components = _parse_wheel_filename(wheel_path.name)
+    components = parse_wheel_filename(wheel_path.name)
     old_name = components["distribution"]
-    old_name_normalized = _normalize_name(old_name)
-    new_name_normalized = _normalize_name(new_name)
+    old_name_normalized = normalize_name(old_name)
+    new_name_normalized = normalize_name(new_name)
 
     if old_name_normalized == new_name_normalized:
         raise ValueError(f"New name '{new_name}' is the same as old name '{old_name}'")
@@ -154,8 +193,12 @@ def rename_wheel(
     new_wheel_name = _build_wheel_filename(components)
     output_path = output_dir / new_wheel_name
 
+    # Discover the actual package directory (may differ from distribution name)
+    with zipfile.ZipFile(wheel_path, "r") as zf:
+        pkg_dir = _find_package_dir(zf.namelist(), old_name_normalized, components["version"])
+    old_import_name = pkg_dir if pkg_dir else old_name_normalized
+
     # Process the wheel
-    # Collect all files with their new names and contents
     files: dict[str, bytes] = {}
 
     # Old and new dist-info directory names
@@ -170,8 +213,8 @@ def rename_wheel(
         new_file_name = name
 
         # Rename the package directory
-        if name.startswith(f"{old_name_normalized}/") or name == old_name_normalized:
-            new_file_name = new_name_normalized + name[len(old_name_normalized) :]
+        if name.startswith(f"{old_import_name}/") or name == old_import_name:
+            new_file_name = new_name_normalized + name[len(old_import_name) :]
 
         # Rename the dist-info directory
         elif name.startswith(f"{old_dist_info}/") or name == old_dist_info:
@@ -190,7 +233,7 @@ def rename_wheel(
 
         # Update Python files (imports)
         elif update_imports and new_file_name.endswith(".py"):
-            new_content = _update_python_imports(content, old_name_normalized, new_name_normalized)
+            new_content = _update_python_imports(content, old_import_name, new_name_normalized)
 
         # Skip the old RECORD file (we'll generate a new one)
         if name.endswith("/RECORD"):
@@ -203,7 +246,7 @@ def rename_wheel(
     record_lines: list[str] = []
 
     for file_name, content in sorted(files.items()):
-        file_hash = _compute_record_hash(content)
+        file_hash = compute_record_hash(content)
         file_size = len(content)
         record_lines.append(f"{file_name},{file_hash},{file_size}")
 
@@ -250,20 +293,18 @@ def rename_wheel_from_bytes(
 
         # Extract version from dist-info directory name
         dist_info_name = dist_info_dirs[0].split("/")[0]  # e.g., "icechunk-1.0.0.dist-info"
-        old_name_normalized, version = (
-            dist_info_name.rsplit("-", 1)[0],
-            dist_info_name.rsplit("-", 1)[1].replace(".dist-info", ""),
-        )
-
-        # Re-extract version properly
         parts = dist_info_name.replace(".dist-info", "").rsplit("-", 1)
         old_name_normalized = parts[0]
         version = parts[1] if len(parts) > 1 else "0.0.0"
 
-        new_name_normalized = _normalize_name(new_name)
+        new_name_normalized = normalize_name(new_name)
 
         if old_name_normalized == new_name_normalized:
             return wheel_bytes  # No rename needed
+
+        # Discover the actual package directory (may differ from distribution name)
+        pkg_dir = _find_package_dir(zf.namelist(), old_name_normalized, version)
+        old_import_name = pkg_dir if pkg_dir else old_name_normalized
 
         # Old and new dist-info directory names
         old_dist_info = f"{old_name_normalized}-{version}.dist-info"
@@ -281,8 +322,8 @@ def rename_wheel_from_bytes(
             new_file_name = name
 
             # Rename the package directory
-            if name.startswith(f"{old_name_normalized}/") or name == old_name_normalized:
-                new_file_name = new_name_normalized + name[len(old_name_normalized) :]
+            if name.startswith(f"{old_import_name}/") or name == old_import_name:
+                new_file_name = new_name_normalized + name[len(old_import_name) :]
 
             # Rename the dist-info directory
             elif name.startswith(f"{old_dist_info}/") or name == old_dist_info:
@@ -301,9 +342,7 @@ def rename_wheel_from_bytes(
 
             # Update Python files (imports)
             elif update_imports and new_file_name.endswith(".py"):
-                new_content = _update_python_imports(
-                    content, old_name_normalized, new_name_normalized
-                )
+                new_content = _update_python_imports(content, old_import_name, new_name_normalized)
 
             # Skip the old RECORD file (we'll generate a new one)
             if name.endswith("/RECORD"):
@@ -316,7 +355,7 @@ def rename_wheel_from_bytes(
     record_lines: list[str] = []
 
     for file_name, content in sorted(files.items()):
-        file_hash = _compute_record_hash(content)
+        file_hash = compute_record_hash(content)
         file_size = len(content)
         record_lines.append(f"{file_name},{file_hash},{file_size}")
 
@@ -343,7 +382,7 @@ def inspect_wheel(wheel_path: Path) -> dict[str, object]:
     if not wheel_path.exists():
         raise FileNotFoundError(f"Wheel not found: {wheel_path}")
 
-    components = _parse_wheel_filename(wheel_path.name)
+    components = parse_wheel_filename(wheel_path.name)
 
     info: dict[str, object] = {
         "filename": wheel_path.name,

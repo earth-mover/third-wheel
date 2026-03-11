@@ -204,6 +204,192 @@ third-wheel run script.py -- --rename "this-goes-to-script"
 - `--python-version`: Target Python version (e.g., `3.12`)
 - `-v, --verbose`: Print diagnostic info about what third-wheel is doing
 
+### 🛞 sync
+
+Install renamed packages into the current virtual environment. This is the project-level equivalent of `run` — instead of inline PEP 723 scripts, it reads rename specs from `pyproject.toml` and installs them via `uv pip install`.
+
+**Quick start** — add a rename and install it in one step:
+
+```bash
+third-wheel add "icechunk<2=icechunk_v1" --sync
+```
+
+**pyproject.toml configuration** — declare renames in `[tool.third-wheel]`:
+
+```toml
+[tool.third-wheel]
+renames = [
+    {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+]
+```
+
+> **Note:** Renamed packages should NOT be listed in `[project].dependencies` or
+> `[dependency-groups]` — `uv sync` would fail trying to resolve them from PyPI.
+> The `[tool.third-wheel]` section is ignored by uv. Run `third-wheel sync` to
+> install them into your venv separately.
+
+Then sync:
+
+```bash
+third-wheel sync
+```
+
+**CLI-only sync** (temporary, without modifying pyproject.toml):
+
+```bash
+third-wheel sync --rename "icechunk<2=icechunk_v1"
+```
+
+**Local wheels** via `--find-links` for CI or local builds:
+
+```bash
+third-wheel sync --find-links ./dist/ --rename "mypkg<2=mypkg_v1"
+```
+
+**The icechunk CI pattern** — `sync` simplifies multi-step workflows:
+
+Before (2 steps):
+
+```bash
+third-wheel download icechunk --version ">=1,<2" --rename icechunk_v1 -o ./dist-v1/
+uv pip install dist-v1/icechunk_v1-*.whl
+```
+
+After (1 step):
+
+```bash
+third-wheel sync --rename "icechunk>=1,<2=icechunk_v1"
+```
+
+**Options:**
+
+- `--rename`: Rename rule (can be specified multiple times, temporary — not saved to pyproject.toml)
+- `-i, --index-url`: Package index URL (default: PyPI, or `index-url` from `[tool.third-wheel]`)
+- `--find-links`: Local directory containing pre-built wheels (skips downloading from index)
+- `--force`: Force re-download even when wheels are already cached
+- `--installer`: Installer backend to use: `uv` (default), `pip`, or `auto`. With `auto`, pixi/conda environments use `uv pip install --python <conda_python>` instead of plain pip.
+- `--python-version`: Target Python version (e.g., `3.12`)
+- `-p, --pyproject`: Path to pyproject.toml (default: auto-detect)
+- `-v, --verbose`: Print diagnostic info
+
+### 🛞 add
+
+Add a rename to `pyproject.toml`'s `[tool.third-wheel]` section. Optionally install it immediately with `--sync`.
+
+```bash
+third-wheel add <rename_spec> [--sync] [-i <index_url>] [-p <pyproject>]
+
+# Examples:
+third-wheel add "icechunk<2=icechunk_v1"
+third-wheel add "icechunk<2=icechunk_v1" --sync
+third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
+```
+
+The `RENAME_SPEC` format is `ORIGINAL[VERSION_SPEC]=NEW_NAME` (same as `--rename` elsewhere).
+
+If `[tool.third-wheel]` doesn't exist in pyproject.toml, it is created. If a rename with the same `new-name` already exists, it is updated in place.
+
+**Options:**
+
+- `--sync/--no-sync`: Also run `third-wheel sync` after adding (default: no)
+- `-i, --index-url`: Package index URL to store in config
+- `-p, --pyproject`: Path to pyproject.toml (default: `./pyproject.toml`)
+- `-v, --verbose`: Print diagnostic info
+
+### 🛞 cache-clean
+
+Remove cached wheels used by `sync` and `run`. Useful when you want to force a fresh download or reclaim disk space.
+
+```bash
+third-wheel cache-clean              # Remove all cached wheels
+third-wheel cache-clean --sync-only  # Remove only sync cache
+third-wheel cache-clean --run-only   # Remove only run cache
+third-wheel cache-clean -v           # Print what is being removed
+```
+
+**Options:**
+
+- `--sync-only`: Only remove cached wheels from `sync` operations
+- `--run-only`: Only remove cached wheels from `run` operations
+- `-v, --verbose`: Print diagnostic info about what is being removed
+
+### Real-world example: icechunk cross-version testing
+
+The [icechunk](https://github.com/earth-mover/icechunk) project needs to run stateful
+tests that verify v1-created data can be read by v2. Here's how to set that up locally
+using `third-wheel sync`:
+
+**One-time setup** (adds config to pyproject.toml, committed to the repo):
+
+```bash
+cd icechunk-python
+
+# Add the rename spec to pyproject.toml
+third-wheel add "icechunk>=1,<2=icechunk_v1"
+```
+
+This adds to `pyproject.toml`:
+
+```toml
+[tool.third-wheel]
+renames = [
+    {original = "icechunk", new-name = "icechunk_v1", version = ">=1,<2"},
+]
+```
+
+**Daily development workflow:**
+
+```bash
+uv sync --group test      # install icechunk v2 (from source) + test deps
+third-wheel sync           # download icechunk v1 from PyPI, rename, install
+uv run pytest tests/test_stateful_compat.py -v
+```
+
+**In CI** (e.g., GitHub Actions):
+
+```yaml
+- name: Install icechunk + icechunk_v1
+  run: |
+    uv sync --group test
+    uvx third-wheel sync --rename "icechunk>=1,<2=icechunk_v1"
+```
+
+Or if you have locally-built wheels:
+
+```bash
+third-wheel sync --find-links ./dist-v1/ --rename "icechunk>=1,<2=icechunk_v1"
+```
+
+**pixi-based workflow:**
+
+icechunk also supports pixi. `third-wheel sync` auto-detects pixi/conda
+environments. With `--installer auto` (or when auto-detected), it uses
+`uv pip install --python <conda_python>` to install into the conda environment:
+
+```bash
+pixi install
+pixi run third-wheel sync    # auto-detects pixi, uses uv pip install --python ...
+```
+
+Or be explicit with `--installer`:
+
+```bash
+pixi run third-wheel sync --installer pip   # use plain pip
+pixi run third-wheel sync --installer auto  # use uv pip install --python <conda_python>
+```
+
+**Using both versions in tests:**
+
+```python
+import icechunk        # v2 (from source / latest)
+import icechunk_v1     # v1 (downloaded + renamed)
+
+# Create data with v1 API
+v1_store = icechunk_v1.IcechunkStore.create(...)
+# Read it back with v2 API
+v2_store = icechunk.IcechunkStore.open(...)
+```
+
 ### 🛞 rename
 
 Rename a wheel package:
@@ -360,6 +546,16 @@ If the extension doesn't use the underscore prefix pattern, the tool will warn y
 - **Compiled extensions without underscore prefix**: Cannot be renamed without rebuilding
 - **Hardcoded package names in strings**: Not automatically updated (only import statements are)
 - **Entry points**: Updated in metadata but external scripts may need adjustment
+- **Import name ≠ package name**: Some packages have a different import name than their PyPI name (e.g., `scikit-image` is imported as `skimage`, `Pillow` as `PIL`, `opencv-python` as `cv2`). When renaming these, use the **import name** as the basis for the new name — third-wheel renames the directory inside the wheel, which matches the import name. For example, to rename `scikit-image`, use `skimage_old` (not `scikit_image_old`):
+
+  ```python
+  # dependencies = [
+  #   "skimage_old",  # scikit-image>=0.24,<0.25
+  #   "scikit-image>=0.26",
+  # ]
+  import skimage_old  # old version
+  import skimage       # new version
+  ```
 
 ## Development
 

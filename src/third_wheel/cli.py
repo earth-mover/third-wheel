@@ -14,7 +14,7 @@ from rich.table import Table
 from third_wheel.download import download_compatible_wheel, list_wheels
 from third_wheel.patch import patch_wheel
 from third_wheel.rename import inspect_wheel, rename_wheel
-from third_wheel.run import parse_cli_renames, run_script
+from third_wheel.run import RenameSpec, parse_cli_renames, run_script
 
 console = Console()
 err_console = Console(stderr=True)
@@ -596,6 +596,406 @@ def run(
     except Exception as e:
         err_console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
+
+
+@main.command(name="sync")
+@click.option(
+    "--rename",
+    "renames",
+    multiple=True,
+    help=(
+        "Rename rule: 'original[version_spec]=new_name' "
+        "(e.g., 'icechunk<2=icechunk_v1'). Can be specified multiple times. "
+        "These are temporary (not saved to pyproject.toml)."
+    ),
+)
+@click.option(
+    "-i",
+    "--index-url",
+    default=None,
+    help="Package index URL (default: PyPI, or index-url from [tool.third-wheel])",
+)
+@click.option(
+    "--find-links",
+    "find_links",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Local directory containing pre-built wheels (skips downloading from index)",
+)
+@click.option(
+    "--python-version",
+    "python_version",
+    default=None,
+    help="Target Python version (e.g., '3.12'). Defaults to current interpreter.",
+)
+@click.option(
+    "-p",
+    "--pyproject",
+    "pyproject_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to pyproject.toml (default: auto-detect in current or parent dirs)",
+)
+@click.option(
+    "--installer",
+    type=click.Choice(["uv", "pip", "auto"]),
+    default="auto",
+    help="Installer to use: 'uv' (uv pip install), 'pip' (pip install), "
+    "or 'auto' (detect — uses uv pip install --python targeting pixi/conda "
+    "envs when CONDA_PREFIX is set, plain uv pip install otherwise)",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-download and re-rename wheels even if cached",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Print extra diagnostic info",
+)
+def sync_cmd(
+    renames: tuple[str, ...],
+    index_url: str | None,
+    find_links: Path | None,
+    python_version: str | None,
+    pyproject_path: Path | None,
+    installer: str,
+    force: bool,
+    verbose: bool,
+) -> None:
+    """Install renamed packages into the current virtual environment.
+
+    \b
+    Reads rename specifications from pyproject.toml and/or CLI --rename flags,
+    then downloads, renames, and installs the wheels via uv pip install
+    (auto-detects pixi/conda environments via CONDA_PREFIX).
+
+    \b
+    PYPROJECT.TOML RENAMES
+    ======================
+    Declare renames in pyproject.toml's [tool.third-wheel] section:
+
+    \b
+        [tool.third-wheel]
+        renames = [
+            {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+        ]
+
+    \b
+    Note: Do NOT add renamed packages to [project].dependencies or
+    [dependency-groups] — uv sync would fail trying to resolve them.
+    Use [tool.third-wheel] which uv ignores, and run third-wheel sync
+    to install them separately.
+
+    \b
+    CLI RENAMES (TEMPORARY)
+    =======================
+    For one-off installs without modifying pyproject.toml:
+
+    \b
+        third-wheel sync --rename "icechunk<2=icechunk_v1"
+
+    \b
+    LOCAL WHEELS
+    ============
+    Use --find-links to source wheels from a local directory instead
+    of downloading from a package index:
+
+    \b
+        third-wheel sync --find-links ./dist/ --rename "icechunk<2=icechunk_v1"
+
+    \b
+    EXAMPLES
+    ========
+        # Sync from pyproject.toml
+        third-wheel sync
+
+    \b
+        # Temporary CLI-only rename
+        third-wheel sync --rename "icechunk<2=icechunk_v1"
+
+    \b
+        # Use local wheels
+        third-wheel sync --find-links ./dist/ --rename "mypkg<2=mypkg_v1"
+
+    \b
+        # Custom index
+        third-wheel sync -i https://pypi.anaconda.org/.../simple
+    """
+    from third_wheel.sync import (
+        get_pyproject_config,
+        parse_renames_from_pyproject,
+        sync,
+    )
+
+    try:
+        # Parse CLI renames
+        cli_rename_specs = parse_cli_renames(renames) if renames else []
+
+        # Find and parse pyproject.toml
+        pyproject_renames: list[RenameSpec] = []
+        pyproject_config: dict[str, str] = {}
+
+        if pyproject_path is None:
+            # Auto-detect: look in current dir and parents
+            for candidate in [Path("pyproject.toml"), Path("../pyproject.toml")]:
+                if candidate.exists():
+                    pyproject_path = candidate
+                    break
+
+        if pyproject_path and pyproject_path.exists():
+            pyproject_renames = parse_renames_from_pyproject(pyproject_path)
+            pyproject_config = get_pyproject_config(pyproject_path)
+            if verbose:
+                err_console.print(
+                    f"[dim]Read {len(pyproject_renames)} rename(s) from {pyproject_path}[/dim]"
+                )
+
+        # Merge: CLI renames override pyproject.toml renames
+        from third_wheel.run import merge_renames
+
+        all_renames = merge_renames(pyproject_renames, cli_rename_specs)
+
+        if not all_renames:
+            console.print(
+                "[yellow]No renames found.[/yellow] Add renames to pyproject.toml or use --rename."
+            )
+            return
+
+        # Resolve index URL: CLI > pyproject.toml config > default
+        resolved_index = index_url or pyproject_config.get("index_url", "https://pypi.org/simple/")
+
+        # Show what we're doing
+        for spec in all_renames:
+            ver = f" ({spec.version})" if spec.version else ""
+            source = "pyproject.toml" if spec in pyproject_renames else "CLI"
+            console.print(
+                f"  [dim]{source}:[/dim] {spec.original}{ver} -> [bold]{spec.new_name}[/bold]"
+            )
+
+        # Run sync
+        resolved_installer = installer if installer != "auto" else None
+        with console.status("[bold blue]Syncing renamed packages..."):
+            installed = sync(
+                all_renames,
+                index_url=resolved_index,
+                find_links=find_links,
+                python_version=python_version,
+                installer=resolved_installer,
+                force=force,
+                verbose=verbose,
+            )
+
+        for wheel in installed:
+            console.print(f"[green]Installed:[/green] [bold]{wheel.name}[/bold]")
+
+        console.print(f"[green]Synced {len(installed)} renamed package(s).[/green]")
+
+    except Exception as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@main.command(name="add")
+@click.argument("rename_spec")
+@click.option(
+    "-i",
+    "--index-url",
+    default=None,
+    help="Package index URL to store in config (saved to [tool.third-wheel])",
+)
+@click.option(
+    "-p",
+    "--pyproject",
+    "pyproject_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to pyproject.toml (default: ./pyproject.toml)",
+)
+@click.option(
+    "--sync/--no-sync",
+    "run_sync",
+    default=False,
+    help="Also run 'third-wheel sync' after adding (default: no)",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Print extra diagnostic info",
+)
+def add_cmd(
+    rename_spec: str,
+    index_url: str | None,
+    pyproject_path: Path | None,
+    run_sync: bool,
+    verbose: bool,
+) -> None:
+    """Add a rename to pyproject.toml's [tool.third-wheel] section.
+
+    \b
+    RENAME_SPEC format: 'original[version_spec]=new_name'
+
+    \b
+    EXAMPLES
+    ========
+        # Add icechunk v1 rename
+        third-wheel add "icechunk<2=icechunk_v1"
+
+    \b
+        # Add and immediately install
+        third-wheel add "icechunk<2=icechunk_v1" --sync
+
+    \b
+        # With a specific index
+        third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/.../simple
+    """
+    from third_wheel.sync import add_rename_to_pyproject, sync
+
+    try:
+        # Parse the rename spec
+        specs = parse_cli_renames([rename_spec])
+        if not specs:
+            err_console.print("[red]Error:[/red] Could not parse rename spec.")
+            sys.exit(1)
+        spec = specs[0]
+
+        # Find pyproject.toml
+        if pyproject_path is None:
+            pyproject_path = Path("pyproject.toml")
+
+        if not pyproject_path.exists():
+            err_console.print(
+                f"[red]Error:[/red] {pyproject_path} not found. "
+                "Run this from your project root or use -p."
+            )
+            sys.exit(1)
+
+        # Add to pyproject.toml
+        add_rename_to_pyproject(pyproject_path, spec)
+
+        ver = f" ({spec.version})" if spec.version else ""
+        console.print(
+            f"[green]Added:[/green] {spec.original}{ver} "
+            f"-> [bold]{spec.new_name}[/bold] to {pyproject_path}"
+        )
+
+        # Optionally sync
+        if run_sync:
+            resolved_index = index_url or "https://pypi.org/simple/"
+            with console.status("[bold blue]Syncing renamed packages..."):
+                installed = sync(
+                    [spec],
+                    index_url=resolved_index,
+                    verbose=verbose,
+                )
+            for wheel in installed:
+                console.print(f"[green]Installed:[/green] [bold]{wheel.name}[/bold]")
+
+    except Exception as e:
+        err_console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@main.command(name="cache-clean")
+@click.option(
+    "--sync-only",
+    is_flag=True,
+    default=False,
+    help="Only clean the sync cache (preserve run cache)",
+)
+@click.option(
+    "--run-only",
+    is_flag=True,
+    default=False,
+    help="Only clean the run cache (preserve sync cache)",
+)
+@click.option(
+    "-v",
+    "--verbose",
+    is_flag=True,
+    default=False,
+    help="Print details about what was removed",
+)
+def cache_clean_cmd(
+    sync_only: bool,
+    run_only: bool,
+    verbose: bool,
+) -> None:
+    """Remove cached renamed wheels.
+
+    \b
+    Clears the third-wheel cache at ~/.cache/third-wheel/ (or
+    $THIRD_WHEEL_CACHE_DIR). Use --sync-only or --run-only to
+    selectively clean one namespace.
+
+    \b
+    EXAMPLES
+    ========
+        third-wheel cache-clean
+        third-wheel cache-clean --sync-only
+        third-wheel cache-clean -v
+    """
+    import shutil
+
+    from third_wheel.run import cache_dir
+
+    root = cache_dir()
+    if not root.exists():
+        console.print("[dim]Cache directory does not exist — nothing to clean.[/dim]")
+        return
+
+    if sync_only and run_only:
+        err_console.print("[red]Error:[/red] Cannot use both --sync-only and --run-only")
+        sys.exit(1)
+
+    if sync_only:
+        target = root / "sync"
+        label = "sync"
+    elif run_only:
+        # The run cache is everything in root EXCEPT the sync/ subdir
+        target = None
+        label = "run"
+    else:
+        target = root
+        label = "all"
+
+    if target is not None:
+        if not target.exists():
+            console.print(f"[dim]No {label} cache to clean.[/dim]")
+            return
+        if verbose:
+            # Count files
+            wheel_count = len(list(target.rglob("*.whl")))
+            console.print(f"[dim]Removing {wheel_count} cached wheel(s) from {target}[/dim]")
+        shutil.rmtree(target)
+        if target != root:
+            # We only deleted a subdirectory; root still exists
+            pass
+    else:
+        # run-only: remove everything except sync/
+        removed = 0
+        for child in root.iterdir():
+            if child.name == "sync":
+                continue
+            if verbose:
+                wheel_count = len(list(child.rglob("*.whl"))) if child.is_dir() else 0
+                console.print(f"[dim]Removing {child.name} ({wheel_count} wheel(s))[/dim]")
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+            removed += 1
+        if removed == 0:
+            console.print("[dim]No run cache to clean.[/dim]")
+            return
+
+    console.print(f"[green]Cleaned {label} cache.[/green]")
 
 
 if __name__ == "__main__":
