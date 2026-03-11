@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import httpx
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -73,7 +76,8 @@ class UpstreamClient:
                 if response.status_code == 404:
                     continue
                 response.raise_for_status()
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
+                logger.warning("Upstream %s failed for %s: %s", upstream_url, project, exc)
                 continue
 
             # Parse the HTML response
@@ -95,7 +99,7 @@ class UpstreamClient:
                     try:
                         if Version(pkg.version) not in version_spec:
                             continue
-                    except Exception:
+                    except (ValueError, TypeError):
                         # Skip packages with unparseable versions
                         continue
 

@@ -89,7 +89,10 @@ def _update_python_imports(content: bytes, old_name: str, new_name: str) -> byte
     - import old_name
     - from old_name.submodule import ...
     """
-    text = content.decode("utf-8")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return content  # Binary or non-UTF8 file, skip
 
     # Pattern to match imports (be careful not to replace partial matches)
     # Only replace if old_name is a complete module name (word boundary)
@@ -124,7 +127,7 @@ def _find_package_dir(namelist: list[str], dist_name: str, version: str) -> str 
 
     # Find top-level directories that have __init__.py (Python packages)
     init_files = {name for name in namelist if name.endswith("/__init__.py")}
-    pkg_dirs = set()
+    pkg_dirs: set[str] = set()
     for name in init_files:
         top = name.split("/")[0]
         if top != dist_info and top != data_dir:
@@ -135,7 +138,7 @@ def _find_package_dir(namelist: list[str], dist_name: str, version: str) -> str 
 
     # Multiple packages — pick the one with the most files
     if pkg_dirs:
-        dir_counts = {}
+        dir_counts: dict[str, int] = {}
         for d in pkg_dirs:
             dir_counts[d] = sum(1 for n in namelist if n.startswith(f"{d}/"))
         return max(dir_counts, key=dir_counts.get)  # type: ignore[arg-type]

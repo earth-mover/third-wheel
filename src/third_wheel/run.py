@@ -136,7 +136,7 @@ def extract_renames_from_tool_table(toml_str: str) -> list[RenameSpec]:
 
     try:
         data = tomllib.loads(toml_str)
-    except Exception:
+    except (tomllib.TOMLDecodeError, ValueError, KeyError):
         return []
 
     tool_config = data.get("tool", {}).get("third-wheel", {})

@@ -82,7 +82,7 @@ class TestGenerateProjectIndex:
             },
         ]
         html = generate_project_index("pkg", packages)
-        assert 'data-requires-python=">=3.8"' in html
+        assert 'data-requires-python="&gt;=3.8"' in html
 
 
 # ---------------------------------------------------------------------------

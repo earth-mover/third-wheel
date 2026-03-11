@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html as html_lib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -18,7 +19,8 @@ def generate_root_index(projects: list[str]) -> str:
         PEP 503 compliant HTML
     """
     links = "\n".join(
-        f'    <a href="{project}/">{project}</a>' for project in sorted(set(projects))
+        f'    <a href="{html_lib.escape(project, quote=True)}/">{html_lib.escape(project)}</a>'
+        for project in sorted(set(projects))
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -64,17 +66,21 @@ def generate_project_index(
             # URL points to ourselves for download (we'll rename on-the-fly)
             url = filename
 
-        # Build anchor attributes
-        attrs = [f'href="{url}"']
+        # Build anchor attributes (escape all user-controlled values)
+        escaped_url = html_lib.escape(url or filename, quote=True)
+        escaped_filename = html_lib.escape(filename or "")
+        attrs = [f'href="{escaped_url}"']
 
-        if pkg.get("requires_python"):
-            attrs.append(f'data-requires-python="{pkg["requires_python"]}"')
+        requires_python = pkg.get("requires_python")
+        if requires_python:
+            attrs.append(f'data-requires-python="{html_lib.escape(requires_python, quote=True)}"')
 
-        if pkg.get("hash") and "#" not in url and rename_rule is None and not strip_hashes:
+        pkg_hash = pkg.get("hash")
+        if pkg_hash and "#" not in (url or "") and rename_rule is None and not strip_hashes:
             # Append hash as fragment (skip for renamed/patched packages — content changes)
-            attrs[0] = f'href="{url}#{pkg["hash"]}"'
+            attrs[0] = f'href="{escaped_url}#{html_lib.escape(pkg_hash, quote=True)}"'
 
-        link = f"    <a {' '.join(attrs)}>{filename}</a>"
+        link = f"    <a {' '.join(attrs)}>{escaped_filename}</a>"
         links.append(link)
 
     links_html = "\n".join(links)
@@ -82,10 +88,10 @@ def generate_project_index(
 <html>
 <head>
     <meta name="pypi:repository-version" content="1.0">
-    <title>Links for {project}</title>
+    <title>Links for {html_lib.escape(project)}</title>
 </head>
 <body>
-    <h1>Links for {project}</h1>
+    <h1>Links for {html_lib.escape(project)}</h1>
 {links_html}
 </body>
 </html>
