@@ -7,6 +7,7 @@ Module structure, important functions, and dependency map for the third-wheel co
 ```text
 src/third_wheel/
 ├── __init__.py      # Package exports, version from _version.py (hatch-vcs)
+├── build.py         # Build wheels from git URLs or local paths via uv pip wheel
 ├── cli.py           # Click-based CLI with rich output
 ├── download.py      # PEP 503 index client using pypi-simple
 ├── patch.py         # Patch dependency references in wheels
@@ -23,6 +24,7 @@ src/third_wheel/
 
 tests/
 ├── conftest.py              # Shared fixtures for venv creation
+├── test_build.py            # Wheel building from git/path sources
 ├── test_rename.py           # Unit tests for rename functions
 ├── test_download.py         # Wheel tag parsing tests
 ├── test_run.py              # PEP 723 metadata parsing and rename tests
@@ -37,6 +39,7 @@ tests/
 
 examples/
 ├── cli_rename.py                # CLI rename demo (urllib3 v1 + v2)
+├── compare_zarr.py              # Git source demo (zarr v2 vs dev from git)
 └── icechunk_dual_version.py     # Inline annotation demo (icechunk v1 + v2)
 ```
 
@@ -52,6 +55,10 @@ examples/
 - `normalize_name(name)` - PEP 503 name normalization (public)
 - `parse_wheel_filename(filename)` - Parse wheel filename into components (public)
 - `compute_record_hash(data)` - SHA256 for RECORD file (public)
+
+### `build.py`
+
+- `build_wheel_from_source(source, output_dir, python_version)` - Build a wheel from a git URL or local path using `uv pip wheel --no-deps`
 
 ### `download.py`
 
@@ -70,6 +77,7 @@ examples/
 - `extract_renames_from_comments(toml_str)` - Parse `"pkg_v1",  # pkg<2` comment annotations
 - `extract_renames_from_tool_table(toml_str)` - Parse `[tool.third-wheel]` structured metadata
 - `parse_cli_renames(rename_args)` - Parse `--rename "pkg<2=pkg_v1"` CLI args (splits on last `=`)
+- `RenameSpec` - Dataclass with `original`, `new_name`, `version`, `source` fields. `source_type` property returns `"index"`, `"git"`, or `"path"` based on the `source` prefix.
 - `run_script(script_path, cli_renames, index_url, ...)` - Orchestrate download, rename, and `uv run`
 - `cache_dir()` - Return the platform cache directory for third-wheel (public)
 - `rename_cache_key(original, version, new_name)` - Compute cache key for a renamed wheel (public)

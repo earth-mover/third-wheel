@@ -175,6 +175,28 @@ For more complex setups, use the structured `[tool.third-wheel]` form:
 
 If both the comment syntax and `[tool.third-wheel]` specify the same `new-name`, the structured form takes priority.
 
+**Git/path sources** — build from a git repo or local path instead of downloading from an index:
+
+```python
+# /// script
+# dependencies = ["zarr_dev", "zarr>=2.18,<3"]
+# [tool.third-wheel]
+# renames = [
+#   {original = "zarr", new-name = "zarr_dev", source = "git+https://github.com/zarr-developers/zarr-python@main"},
+# ]
+# ///
+
+import zarr_dev  # built from git main
+import zarr      # released v2 from PyPI
+```
+
+The `source` field accepts:
+
+- Git URLs: `git+https://github.com/org/repo@branch` (follows pip/uv convention)
+- Local paths: `/path/to/project` or `./relative/path`
+
+Git sources are cached by URL; local path sources always rebuild (since the source is mutable).
+
 **CLI renames** override or supplement script annotations:
 
 ```bash
@@ -220,8 +242,11 @@ third-wheel add "icechunk<2=icechunk_v1" --sync
 [tool.third-wheel]
 renames = [
     {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+    {original = "zarr", new-name = "zarr_dev", source = "git+https://github.com/zarr-developers/zarr-python@main"},
 ]
 ```
+
+The `source` field builds from a git URL or local path instead of downloading from the index.
 
 > **Note:** Renamed packages should NOT be listed in `[project].dependencies` or
 > `[dependency-groups]` — `uv sync` would fail trying to resolve them from PyPI.
@@ -277,7 +302,7 @@ third-wheel sync --rename "icechunk>=1,<2=icechunk_v1"
 Add a rename to `pyproject.toml`'s `[tool.third-wheel]` section, or to a PEP 723 inline script with `--script`. Optionally install it immediately with `--sync`.
 
 ```bash
-third-wheel add <rename_spec> [--sync] [-i <index_url>] [-p <pyproject>]
+third-wheel add <rename_spec> [--source <url>] [--sync] [-i <index_url>] [-p <pyproject>]
 third-wheel add --script <script.py> <rename_spec>
 
 # Examples:
@@ -285,6 +310,9 @@ third-wheel add "icechunk<2=icechunk_v1"
 third-wheel add "icechunk<2=icechunk_v1" --sync
 third-wheel add "icechunk<2=icechunk_v1" -i https://pypi.anaconda.org/scientific-python-nightly-wheels/simple
 third-wheel add --script compare.py "pandas<2=pandas_v2"
+
+# Build from git instead of downloading from an index:
+third-wheel add "zarr=zarr_dev" --source "git+https://github.com/zarr-developers/zarr-python@main"
 ```
 
 The `RENAME_SPEC` format is `ORIGINAL[VERSION_SPEC]=NEW_NAME` (same as `--rename` elsewhere).
@@ -295,7 +323,9 @@ For **scripts**: the dependency is added to the `dependencies` list and a `[tool
 
 **Options:**
 
+- `--source`: Git URL or local path to build from instead of downloading (e.g., `git+https://github.com/org/repo@tag`)
 - `--sync/--no-sync`: Also run `third-wheel sync` after adding (default: no)
+- `--script`: Add to a PEP 723 inline script instead of pyproject.toml
 - `-i, --index-url`: Package index URL to store in config
 - `-p, --pyproject`: Path to pyproject.toml (default: `./pyproject.toml`)
 - `-v, --verbose`: Print diagnostic info
@@ -548,7 +578,7 @@ If the extension doesn't use the underscore prefix pattern, the tool will warn y
 
 - **Wheels only**: third-wheel can only rename wheel (`.whl`) files, not sdists. If a package version only has sdists on PyPI (no wheels), it cannot be downloaded or renamed. Most modern packages publish wheels, but very old versions may not.
 - **Compiled extensions without underscore prefix**: Cannot be renamed without rebuilding
-- **Hardcoded package names in strings**: Not automatically updated (only import statements are)
+- **Hardcoded package names in strings**: When using `third-wheel run` or `third-wheel sync`, string-based module references (config registries, plugin systems, `importlib.import_module()` calls) are automatically rewritten alongside imports. For the low-level `third-wheel rename` command, use `--patch-strings` to enable this. Without it, only `import`/`from` statements are updated.
 - **Entry points**: Updated in metadata but external scripts may need adjustment
 - **Import name ≠ package name**: Some packages have a different import name than their PyPI name (e.g., `scikit-image` is imported as `skimage`, `Pillow` as `PIL`, `opencv-python` as `cv2`). When renaming these, use the **import name** as the basis for the new name — third-wheel renames the directory inside the wheel, which matches the import name. For example, to rename `scikit-image`, use `skimage_old` (not `scikit_image_old`):
 

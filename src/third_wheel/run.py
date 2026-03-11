@@ -12,6 +12,7 @@ Rename annotations can be specified in two ways:
        [tool.third-wheel]
        renames = [
            {original = "icechunk", new-name = "icechunk_v1", version = "<2"},
+           {original = "zarr", new-name = "zarr_dev", source = "git+https://github.com/zarr-developers/zarr-python@main"},
        ]
 """
 
@@ -33,6 +34,7 @@ class RenameSpec:
     original: str
     new_name: str
     version: str | None = None
+    source: str | None = None
 
     @property
     def version_spec(self) -> str:
@@ -40,6 +42,15 @@ class RenameSpec:
         if self.version:
             return f"{self.original}{self.version}"
         return self.original
+
+    @property
+    def source_type(self) -> str:
+        """Return 'index', 'git', or 'path' based on the source field."""
+        if self.source is None:
+            return "index"
+        if self.source.startswith("git+"):
+            return "git"
+        return "path"
 
 
 def parse_pep723_metadata(script: str) -> str | None:
@@ -150,6 +161,7 @@ def extract_renames_from_tool_table(toml_str: str) -> list[RenameSpec]:
                     original=entry["original"],
                     new_name=entry["new-name"],
                     version=entry.get("version"),
+                    source=entry.get("source"),
                 )
             )
     return renames
@@ -287,31 +299,50 @@ def prepare_wheels(
     wheel_dir: Path,
     index_url: str,
     python_version: str | None,
+    *,
+    patch_strings: bool = True,
 ) -> None:
-    """Download and rename wheels for all rename specs.
+    """Download (or build from source) and rename wheels for all rename specs.
 
     Args:
         renames: Rename specifications
         wheel_dir: Directory to place renamed wheels
         index_url: Package index URL
         python_version: Target Python version
+        patch_strings: Whether to rewrite string references to the old module
+            name in Python source files (default: True). Needed for packages
+            that use string-based module lookups like plugin registries.
     """
-    from third_wheel.download import download_compatible_wheel
     from third_wheel.rename import rename_wheel
 
     for spec in renames:
-        downloaded = download_compatible_wheel(
-            spec.original,
-            wheel_dir,
-            index_url=index_url,
-            version=spec.version,
-            python_version=python_version,
-            show_progress=False,
-        )
-        if downloaded is None:
-            raise RuntimeError(f"Could not find a compatible wheel for {spec.version_spec}")
+        if spec.source_type in ("git", "path"):
+            from third_wheel.build import build_wheel_from_source
 
-        renamed = rename_wheel(downloaded, spec.new_name, output_dir=wheel_dir)
+            downloaded = build_wheel_from_source(
+                spec.source,  # type: ignore[arg-type]  # source is not None when source_type != "index"
+                wheel_dir,
+                python_version=python_version,
+            )
+        else:
+            from third_wheel.download import download_compatible_wheel
+
+            downloaded = download_compatible_wheel(
+                spec.original,
+                wheel_dir,
+                index_url=index_url,
+                version=spec.version,
+                python_version=python_version,
+                show_progress=False,
+            )
+
+        if downloaded is None:
+            source_desc = spec.source or spec.version_spec
+            raise RuntimeError(f"Could not find/build a compatible wheel for {source_desc}")
+
+        renamed = rename_wheel(
+            downloaded, spec.new_name, output_dir=wheel_dir, patch_strings=patch_strings
+        )
         # Remove the original (un-renamed) wheel
         if downloaded != renamed:
             downloaded.unlink()
@@ -343,7 +374,7 @@ def rename_cache_key(
     """
     parts = []
     for r in sorted(renames, key=lambda r: r.new_name):
-        parts.append(f"{r.original}|{r.version or ''}|{r.new_name}")
+        parts.append(f"{r.original}|{r.version or ''}|{r.new_name}|{r.source or ''}")
     parts.append(f"index={index_url}")
     parts.append(f"python={python_version or 'auto'}")
     key_str = "\n".join(parts)
@@ -408,7 +439,9 @@ def run_script(
     expected_names = {r.new_name.replace("-", "_") for r in all_renames}
     cached_names = {w.name.split("-")[0] for w in existing_wheels}
 
-    if not expected_names.issubset(cached_names):
+    # Path sources are always mutable — never use cache
+    has_path_sources = any(r.source_type == "path" for r in all_renames)
+    if has_path_sources or not expected_names.issubset(cached_names):
         if verbose:
             print("third-wheel: downloading and renaming wheels...", file=sys.stderr)
         prepare_wheels(

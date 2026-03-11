@@ -186,6 +186,32 @@ renames = [
         assert len(renames) == 1
         assert renames[0].version is None
 
+    def test_with_source_field(self):
+        toml_str = """\
+[tool.third-wheel]
+renames = [
+  {original = "zarr", new-name = "zarr_dev", source = "git+https://github.com/zarr-developers/zarr-python@main"},
+]
+"""
+        renames = extract_renames_from_tool_table(toml_str)
+        assert len(renames) == 1
+        assert renames[0].original == "zarr"
+        assert renames[0].new_name == "zarr_dev"
+        assert renames[0].source == "git+https://github.com/zarr-developers/zarr-python@main"
+        assert renames[0].version is None
+
+    def test_with_source_and_version(self):
+        toml_str = """\
+[tool.third-wheel]
+renames = [
+  {original = "zarr", new-name = "zarr_dev", version = ">=3", source = "git+https://github.com/zarr-developers/zarr-python@main"},
+]
+"""
+        renames = extract_renames_from_tool_table(toml_str)
+        assert len(renames) == 1
+        assert renames[0].source == "git+https://github.com/zarr-developers/zarr-python@main"
+        assert renames[0].version == ">=3"
+
     def test_invalid_toml(self):
         renames = extract_renames_from_tool_table("this is not valid toml {{{")
         assert len(renames) == 0
@@ -339,3 +365,23 @@ class TestRenameSpec:
     def test_version_spec_without_version(self):
         spec = RenameSpec("icechunk", "icechunk_v1")
         assert spec.version_spec == "icechunk"
+
+    def test_source_type_index_when_no_source(self):
+        spec = RenameSpec("icechunk", "icechunk_v1", "<2")
+        assert spec.source_type == "index"
+
+    def test_source_type_git(self):
+        spec = RenameSpec("zarr", "zarr_dev", source="git+https://github.com/org/repo@main")
+        assert spec.source_type == "git"
+
+    def test_source_type_path(self):
+        spec = RenameSpec("zarr", "zarr_dev", source="/home/user/zarr-python")
+        assert spec.source_type == "path"
+
+    def test_source_type_path_relative(self):
+        spec = RenameSpec("zarr", "zarr_dev", source="./zarr-python")
+        assert spec.source_type == "path"
+
+    def test_source_field_default_none(self):
+        spec = RenameSpec("icechunk", "icechunk_v1")
+        assert spec.source is None
