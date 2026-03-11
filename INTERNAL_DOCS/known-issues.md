@@ -44,4 +44,5 @@ Tracker for bugs, tech debt, and missing test coverage. Mark items with `[x]` as
 - [ ] **HIGH: `serve` command missing from README** — No user-facing documentation for proxy server.
 - [ ] **TEST: `run_script`** — Zero unit tests for core orchestration.
 - [ ] **TEST: Missing server passthrough endpoint tests**
+- [x] **HIGH: `parse_wheel_tags` build tag heuristic in download.py** — Same bug as the rename.py heuristic (used `parts[2][0].isdigit()` instead of counting from end). Fixed: now uses `parts[-3]`, `parts[-2]`, `parts[-1]`.
 - [ ] **DOCS: `sync.py` functions missing from architecture.md, `test_sync.py` missing from testing.md**
