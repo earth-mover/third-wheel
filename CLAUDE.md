@@ -37,6 +37,7 @@
 
 Detailed reference docs live in `INTERNAL_DOCS/`:
 
+- **[planning.md](INTERNAL_DOCS/planning.md)** — Current priorities, decisions log, cross-session notes
 - **[architecture.md](INTERNAL_DOCS/architecture.md)** — Codebase structure, module relationships, important functions
 - **[technical-concepts.md](INTERNAL_DOCS/technical-concepts.md)** — Wheel format, PEP 503, compiled extensions
 - **[testing.md](INTERNAL_DOCS/testing.md)** — Test patterns, fixtures, test file locations

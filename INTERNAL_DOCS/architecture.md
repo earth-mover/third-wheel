@@ -1,5 +1,7 @@
 # Architecture
 
+Module structure, important functions, and dependency map for the third-wheel codebase.
+
 ## Codebase Structure
 
 ```text

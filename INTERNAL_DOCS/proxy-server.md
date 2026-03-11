@@ -1,5 +1,7 @@
 # Proxy Server
 
+Setup, configuration, and usage of the on-the-fly renaming proxy server.
+
 The proxy server enables `uv sync` to install renamed packages without manual wheel downloading.
 
 ## How It Works

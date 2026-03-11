@@ -1,5 +1,7 @@
 # Technical Concepts
 
+Background knowledge needed to work on third-wheel: wheel format, PEP 503 indexes, compiled extensions, and import rewriting.
+
 ## Wheel File Format (PEP 427)
 
 - Wheels are ZIP files with `.whl` extension

@@ -1,6 +1,6 @@
 # Known Issues and Tech Debt
 
-Issues discovered during deep review (2026-03-10). Mark items DONE as they are fixed.
+Tracker for bugs, tech debt, and missing test coverage. Mark items with `[x]` as they are fixed. Open items are also tracked in [planning.md](planning.md) under Current Priorities.
 
 ## Pre-existing (in main before sync feature)
 

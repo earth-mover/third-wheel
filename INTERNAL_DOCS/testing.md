@@ -1,5 +1,7 @@
 # Testing
 
+Test organization, fixtures, and patterns used across the test suite.
+
 ## Running Tests
 
 ```bash

@@ -1,5 +1,7 @@
 # Useful Commands
 
+Quick reference for common CLI commands used during development and testing.
+
 ```bash
 # Run a PEP 723 script with inline rename annotations
 uv run third-wheel run examples/cli_rename.py --rename "urllib3<2=urllib3_v1"
