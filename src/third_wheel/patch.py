@@ -28,7 +28,7 @@ import re
 import zipfile
 from typing import TYPE_CHECKING
 
-from third_wheel.rename import _compute_record_hash
+from third_wheel.rename import compute_record_hash
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -111,7 +111,7 @@ def patch_wheel(
     if record_filename:
         record_lines: list[str] = []
         for file_name, content in sorted(files.items()):
-            file_hash = _compute_record_hash(content)
+            file_hash = compute_record_hash(content)
             file_size = len(content)
             record_lines.append(f"{file_name},{file_hash},{file_size}")
         record_lines.append(f"{record_filename},,")
@@ -168,7 +168,7 @@ def patch_wheel_from_bytes(
     if record_filename:
         record_lines: list[str] = []
         for file_name, content in sorted(files.items()):
-            file_hash = _compute_record_hash(content)
+            file_hash = compute_record_hash(content)
             file_size = len(content)
             record_lines.append(f"{file_name},{file_hash},{file_size}")
         record_lines.append(f"{record_filename},,")

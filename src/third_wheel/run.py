@@ -17,10 +17,11 @@ Rename annotations can be specified in two ways:
 
 from __future__ import annotations
 
+import hashlib
+import os
 import re
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -281,7 +282,7 @@ def rewrite_script_metadata(script: str, renames: list[RenameSpec]) -> str:
     return "".join(result)
 
 
-def _prepare_wheels(
+def prepare_wheels(
     renames: list[RenameSpec],
     wheel_dir: Path,
     index_url: str,
@@ -316,15 +317,34 @@ def _prepare_wheels(
             downloaded.unlink()
 
 
-def _has_server_extras() -> bool:
-    """Check if the server extras (fastapi, uvicorn) are available."""
-    try:
-        import fastapi  # noqa: F401
-        import uvicorn  # noqa: F401
+def cache_dir() -> Path:
+    """Return the third-wheel cache directory.
 
-        return True
-    except ImportError:
-        return False
+    Uses $THIRD_WHEEL_CACHE_DIR if set, otherwise ~/.cache/third-wheel/.
+    """
+    env = os.environ.get("THIRD_WHEEL_CACHE_DIR")
+    if env:
+        return Path(env)
+    return Path.home() / ".cache" / "third-wheel"
+
+
+def rename_cache_key(
+    renames: list[RenameSpec],
+    index_url: str,
+    python_version: str | None,
+) -> str:
+    """Compute a stable hash for a set of rename specs.
+
+    The hash changes when the renames, index URL, or python version change,
+    so different configurations get separate cache dirs.
+    """
+    parts = []
+    for r in sorted(renames, key=lambda r: r.new_name):
+        parts.append(f"{r.original}|{r.version or ''}|{r.new_name}")
+    parts.append(f"index={index_url}")
+    parts.append(f"python={python_version or 'auto'}")
+    key_str = "\n".join(parts)
+    return hashlib.sha256(key_str.encode()).hexdigest()[:16]
 
 
 def run_script(
@@ -336,6 +356,10 @@ def run_script(
     verbose: bool = False,
 ) -> int:
     """Run a PEP 723 script with third-wheel rename support.
+
+    Renamed wheels are cached in ~/.cache/third-wheel/ (or $THIRD_WHEEL_CACHE_DIR)
+    keyed by the rename configuration. Subsequent runs with the same renames skip
+    the download+rename step entirely.
 
     Args:
         script_path: Path to the script
@@ -360,50 +384,58 @@ def run_script(
         result = subprocess.run(cmd)
         return result.returncode
 
-    # We have renames to process
-    with tempfile.TemporaryDirectory(prefix="third-wheel-") as tmpdir:
-        tmp = Path(tmpdir)
-        wheel_dir = tmp / "wheels"
-        wheel_dir.mkdir()
+    # Use a stable cache directory keyed by the rename configuration.
+    # This avoids re-downloading and re-renaming wheels on every run.
+    cache_key = rename_cache_key(all_renames, index_url, python_version)
+    cache = cache_dir() / cache_key
+    wheel_dir = cache / "wheels"
+    wheel_dir.mkdir(parents=True, exist_ok=True)
 
+    if verbose:
+        for spec in all_renames:
+            print(
+                f"third-wheel: {spec.original}"
+                f"{'(' + spec.version + ')' if spec.version else ''}"
+                f" -> {spec.new_name}",
+                file=sys.stderr,
+            )
+
+    # Check if renamed wheels are already cached
+    existing_wheels = list(wheel_dir.glob("*.whl"))
+    expected_names = {r.new_name.replace("-", "_") for r in all_renames}
+    cached_names = {w.name.split("-")[0] for w in existing_wheels}
+
+    if not expected_names.issubset(cached_names):
         if verbose:
-            for spec in all_renames:
-                print(
-                    f"third-wheel: {spec.original}"
-                    f"{'(' + spec.version + ')' if spec.version else ''}"
-                    f" -> {spec.new_name}",
-                    file=sys.stderr,
-                )
-
-        # Download and rename wheels
-        _prepare_wheels(
+            print("third-wheel: downloading and renaming wheels...", file=sys.stderr)
+        prepare_wheels(
             all_renames,
             wheel_dir,
             index_url=index_url,
             python_version=python_version,
         )
+    elif verbose:
+        print(f"third-wheel: using cached wheels from {wheel_dir}", file=sys.stderr)
 
-        # Write a cleaned-up copy of the script (no rename comments)
-        clean_script = rewrite_script_metadata(script_text, all_renames)
-        tmp_script = tmp / script_path.name
-        tmp_script.write_text(clean_script)
+    # Write the cleaned-up script to the cache dir (stable path for uv caching)
+    clean_script = rewrite_script_metadata(script_text, all_renames)
+    cached_script = cache / script_path.name
+    cached_script.write_text(clean_script)
 
-        # Build uv run command
-        # --find-links points uv at our pre-downloaded renamed wheels
-        # --no-index for renamed packages isn't needed — uv will find them
-        # in --find-links and use the index for everything else
-        cmd = [
-            "uv",
-            "run",
-            "--find-links",
-            str(wheel_dir),
-            str(tmp_script),
-        ]
-        if script_args:
-            cmd.extend(script_args)
+    # Build uv run command
+    # --find-links points uv at our pre-downloaded renamed wheels
+    cmd = [
+        "uv",
+        "run",
+        "--find-links",
+        str(wheel_dir),
+        str(cached_script),
+    ]
+    if script_args:
+        cmd.extend(script_args)
 
-        if verbose:
-            print(f"third-wheel: running: {' '.join(cmd)}", file=sys.stderr)
+    if verbose:
+        print(f"third-wheel: running: {' '.join(cmd)}", file=sys.stderr)
 
-        result = subprocess.run(cmd)
-        return result.returncode
+    result = subprocess.run(cmd)
+    return result.returncode

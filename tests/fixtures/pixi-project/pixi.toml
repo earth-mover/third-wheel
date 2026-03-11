@@ -1,0 +1,10 @@
+[workspace]
+name = "pixi-third-wheel-test"
+version = "0.1.0"
+description = "Test fixture for third-wheel pixi integration"
+channels = ["conda-forge"]
+platforms = ["osx-arm64", "osx-64", "linux-64"]
+
+[dependencies]
+python = ">=3.11"
+pip = "*"
