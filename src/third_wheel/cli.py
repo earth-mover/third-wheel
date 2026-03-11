@@ -780,9 +780,11 @@ def sync_cmd(
         cli_new_names = {r.new_name for r in cli_rename_specs}
         for spec in all_renames:
             ver = f" ({spec.version})" if spec.version else ""
-            source = "CLI" if spec.new_name in cli_new_names else "pyproject.toml"
+            src_label = "CLI" if spec.new_name in cli_new_names else "pyproject.toml"
+            source_info = f" [dim]from {spec.source}[/dim]" if spec.source else ""
             console.print(
-                f"  [dim]{source}:[/dim] {spec.original}{ver} -> [bold]{spec.new_name}[/bold]"
+                f"  [dim]{src_label}:[/dim] {spec.original}{ver} -> "
+                f"[bold]{spec.new_name}[/bold]{source_info}"
             )
 
         # Run sync
@@ -810,6 +812,12 @@ def sync_cmd(
 
 @main.command(name="add")
 @click.argument("rename_spec")
+@click.option(
+    "--source",
+    "source_url",
+    default=None,
+    help="Git URL or local path to build from (e.g., 'git+https://github.com/org/repo@tag')",
+)
 @click.option(
     "--script",
     "script_path",
@@ -846,6 +854,7 @@ def sync_cmd(
 )
 def add_cmd(
     rename_spec: str,
+    source_url: str | None,
     script_path: Path | None,
     index_url: str | None,
     pyproject_path: Path | None,
@@ -862,6 +871,10 @@ def add_cmd(
     ========
         # Add to pyproject.toml
         third-wheel add "icechunk<2=icechunk_v1"
+
+    \b
+        # Add from a git source
+        third-wheel add "zarr=zarr_dev" --source "git+https://github.com/zarr-developers/zarr-python@main"
 
     \b
         # Add to a PEP 723 script
@@ -889,6 +902,15 @@ def add_cmd(
             err_console.print("[red]🔧 Error:[/red] Could not parse rename spec.")
             sys.exit(1)
         spec = specs[0]
+
+        # Attach source URL if provided
+        if source_url:
+            spec = RenameSpec(
+                original=spec.original,
+                new_name=spec.new_name,
+                version=spec.version,
+                source=source_url,
+            )
 
         if script_path is not None:
             # --- Script mode ---

@@ -419,6 +419,94 @@ class TestAddRenameToPyproject:
         # index-url should still be there
         assert "index-url" in content
 
+    def test_with_source_field(self, tmp_path: Path) -> None:
+        """Source field is included in the TOML entry."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "myproject"
+        """)
+        )
+
+        spec = RenameSpec(
+            "zarr", "zarr_dev", source="git+https://github.com/zarr-developers/zarr-python@main"
+        )
+        add_rename_to_pyproject(pyproject, spec)
+
+        content = pyproject.read_text()
+        assert 'original = "zarr"' in content
+        assert 'new-name = "zarr_dev"' in content
+        assert 'source = "git+https://github.com/zarr-developers/zarr-python@main"' in content
+        # No version key when not specified
+        assert "version" not in content
+
+    def test_with_source_and_version(self, tmp_path: Path) -> None:
+        """Both source and version are included in the TOML entry."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "myproject"
+        """)
+        )
+
+        spec = RenameSpec(
+            "zarr",
+            "zarr_dev",
+            version=">=3",
+            source="git+https://github.com/zarr-developers/zarr-python@main",
+        )
+        add_rename_to_pyproject(pyproject, spec)
+
+        content = pyproject.read_text()
+        assert 'version = ">=3"' in content
+        assert 'source = "git+https://github.com/zarr-developers/zarr-python@main"' in content
+
+    def test_source_roundtrip(self, tmp_path: Path) -> None:
+        """Source field survives write then parse roundtrip."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "myproject"
+        """)
+        )
+
+        spec = RenameSpec(
+            "zarr", "zarr_dev", source="git+https://github.com/zarr-developers/zarr-python@main"
+        )
+        add_rename_to_pyproject(pyproject, spec)
+
+        renames = parse_renames_from_pyproject(pyproject)
+        assert len(renames) == 1
+        assert renames[0].source == "git+https://github.com/zarr-developers/zarr-python@main"
+        assert renames[0].source_type == "git"
+
+    def test_update_source_on_existing_entry(self, tmp_path: Path) -> None:
+        """Updating an existing entry replaces the source field."""
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "myproject"
+
+            [tool.third-wheel]
+            renames = [
+                {original = "zarr", new-name = "zarr_dev", source = "git+https://github.com/zarr-developers/zarr-python@v3.0"},
+            ]
+        """)
+        )
+
+        spec = RenameSpec(
+            "zarr", "zarr_dev", source="git+https://github.com/zarr-developers/zarr-python@main"
+        )
+        add_rename_to_pyproject(pyproject, spec)
+
+        content = pyproject.read_text()
+        assert "@main" in content
+        assert "@v3.0" not in content
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: add_rename_to_pyproject idempotency
@@ -1430,6 +1518,72 @@ class TestAddCLI:
         assert len(renames) == 1
         assert renames[0].new_name == "icechunk_v1"
 
+    def test_add_with_source(self, tmp_path: Path) -> None:
+        """add --source writes the source field to pyproject.toml."""
+        runner = CliRunner()
+
+        pyproject = tmp_path / "pyproject.toml"
+        pyproject.write_text(
+            textwrap.dedent("""\
+            [project]
+            name = "myproject"
+        """)
+        )
+
+        result = runner.invoke(
+            main,
+            [
+                "add",
+                "zarr=zarr_dev",
+                "--source",
+                "git+https://github.com/zarr-developers/zarr-python@main",
+                "--pyproject",
+                str(pyproject),
+            ],
+        )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+        assert "Added" in result.output
+
+        content = pyproject.read_text()
+        assert 'original = "zarr"' in content
+        assert 'new-name = "zarr_dev"' in content
+        assert 'source = "git+https://github.com/zarr-developers/zarr-python@main"' in content
+
+    def test_add_with_source_to_script(self, tmp_path: Path) -> None:
+        """add --source --script writes the source field to a PEP 723 script."""
+        runner = CliRunner()
+
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            import numpy
+        """)
+        )
+
+        result = runner.invoke(
+            main,
+            [
+                "add",
+                "--script",
+                str(script),
+                "zarr=zarr_dev",
+                "--source",
+                "git+https://github.com/zarr-developers/zarr-python@main",
+            ],
+        )
+
+        assert result.exit_code == 0, f"Exit code {result.exit_code}: {result.output}"
+
+        content = script.read_text()
+        assert 'source = "git+https://github.com/zarr-developers/zarr-python@main"' in content
+
 
 # ---------------------------------------------------------------------------
 # Unit tests: add_rename_to_script
@@ -1602,6 +1756,62 @@ class TestAddRenameToScript:
         assert renames[0].original == "icechunk"
         assert renames[0].new_name == "icechunk_v1"
         assert renames[0].version == "<2"
+
+    def test_source_field_in_script(self, tmp_path: Path) -> None:
+        """Source field is included in the script metadata entry."""
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            import numpy
+        """)
+        )
+
+        spec = RenameSpec(
+            original="zarr",
+            new_name="zarr_dev",
+            source="git+https://github.com/zarr-developers/zarr-python@main",
+        )
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        assert 'source = "git+https://github.com/zarr-developers/zarr-python@main"' in content
+        assert '"zarr_dev"' in content
+
+    def test_source_roundtrip_in_script(self, tmp_path: Path) -> None:
+        """Source field survives write then parse roundtrip in a script."""
+        from third_wheel.run import parse_all_renames
+
+        script = tmp_path / "test.py"
+        script.write_text(
+            textwrap.dedent("""\
+            # /// script
+            # dependencies = [
+            #   "numpy",
+            # ]
+            # ///
+
+            import numpy
+        """)
+        )
+
+        spec = RenameSpec(
+            original="zarr",
+            new_name="zarr_dev",
+            source="git+https://github.com/zarr-developers/zarr-python@main",
+        )
+        add_rename_to_script(script, spec)
+
+        content = script.read_text()
+        renames = parse_all_renames(content)
+        assert len(renames) == 1
+        assert renames[0].source == "git+https://github.com/zarr-developers/zarr-python@main"
+        assert renames[0].source_type == "git"
 
 
 class TestAddCLIScript:

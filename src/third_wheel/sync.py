@@ -238,15 +238,18 @@ def sync(
     if verbose:
         for spec in renames:
             ver = f"({spec.version})" if spec.version else ""
+            src = f" from {spec.source}" if spec.source else ""
             print(
-                f"third-wheel sync: {spec.original}{ver} -> {spec.new_name}",
+                f"third-wheel sync: {spec.original}{ver} -> {spec.new_name}{src}",
                 file=sys.stderr,
             )
 
     # Check if renamed wheels are already cached
     expected_names = {r.new_name.replace("-", "_") for r in renames}
 
-    needs_prepare = force
+    # Path sources are always mutable — force rebuild
+    has_path_sources = any(r.source_type == "path" for r in renames)
+    needs_prepare = force or has_path_sources
     if not needs_prepare:
         existing_wheels = list(wheel_dir.glob("*.whl"))
         cached_names = {w.name.split("-")[0] for w in existing_wheels}
@@ -381,7 +384,10 @@ def add_rename_to_script(
 
     # --- Step 2: add/update [tool.third-wheel] renames ---
     version_part = f', version = "{spec.version}"' if spec.version else ""
-    entry = f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}}}'
+    source_part = f', source = "{spec.source}"' if spec.source else ""
+    entry = (
+        f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}{source_part}}}'
+    )
 
     # Re-scan block for [tool.third-wheel] section
     tw_section_idx: int | None = None
@@ -468,7 +474,10 @@ def add_rename_to_pyproject(
 
     # Build the TOML entry for this rename
     version_part = f', version = "{spec.version}"' if spec.version else ""
-    entry = f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}}}'
+    source_part = f', source = "{spec.source}"' if spec.source else ""
+    entry = (
+        f'{{original = "{spec.original}", new-name = "{spec.new_name}"{version_part}{source_part}}}'
+    )
 
     m_section = _TOOL_SECTION_RE.search(content)
     if m_section:

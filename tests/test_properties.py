@@ -544,6 +544,27 @@ class TestExtractRenamesFromToolTableProperties:
         assert result[0].original == original
         assert result[0].new_name == new_name
 
+    @given(
+        original=st.from_regex(r"[a-z]{2,10}", fullmatch=True),
+        new_name=st.from_regex(r"[a-z]{2,10}_v[12]", fullmatch=True),
+        source=st.from_regex(r"git\+https://[a-z]+\.[a-z]+/[a-z]+@[a-z]+", fullmatch=True),
+    )
+    def test_roundtrip_with_source(self, original: str, new_name: str, source: str) -> None:
+        """Valid TOML with source field is extracted correctly."""
+        from third_wheel.run import extract_renames_from_tool_table
+
+        toml_str = (
+            f"[tool.third-wheel]\n"
+            f"renames = [\n"
+            f'  {{original = "{original}", new-name = "{new_name}", source = "{source}"}},\n'
+            f"]\n"
+        )
+        result = extract_renames_from_tool_table(toml_str)
+        assert len(result) == 1
+        assert result[0].original == original
+        assert result[0].new_name == new_name
+        assert result[0].source == source
+
     @given(text=st.text(min_size=0, max_size=300))
     def test_never_crashes(self, text: str) -> None:
         """Arbitrary text never crashes (returns empty list on invalid TOML)."""
@@ -578,6 +599,33 @@ class TestRenameSpecProperties:
         spec = RenameSpec(original=original, new_name="x")
         assert spec.version_spec == original
 
+    def test_source_type_index_when_none(self) -> None:
+        """source_type is 'index' when source is None."""
+        from third_wheel.run import RenameSpec
+
+        spec = RenameSpec(original="x", new_name="y")
+        assert spec.source_type == "index"
+
+    @given(
+        url=st.from_regex(r"git\+https://[a-z]+\.[a-z]+/[a-z]+@[a-z]+", fullmatch=True),
+    )
+    def test_source_type_git(self, url: str) -> None:
+        """source_type is 'git' for git+ URLs."""
+        from third_wheel.run import RenameSpec
+
+        spec = RenameSpec(original="x", new_name="y", source=url)
+        assert spec.source_type == "git"
+
+    @given(
+        path=st.from_regex(r"/[a-z]+/[a-z]+", fullmatch=True),
+    )
+    def test_source_type_path(self, path: str) -> None:
+        """source_type is 'path' for non-git sources."""
+        from third_wheel.run import RenameSpec
+
+        spec = RenameSpec(original="x", new_name="y", source=path)
+        assert spec.source_type == "path"
+
 
 # ---------------------------------------------------------------------------
 # run.py — rename_cache_key
@@ -611,6 +659,29 @@ class TestRenameCacheKeyProperties:
         key = rename_cache_key(renames, "https://pypi.org/simple/", None)
         assert len(key) == 16
         assert all(c in "0123456789abcdef" for c in key)
+
+    @given(
+        original=st.from_regex(r"[a-z]{2,10}", fullmatch=True),
+        new_name=st.from_regex(r"[a-z]{2,10}_v1", fullmatch=True),
+    )
+    def test_source_changes_key(self, original: str, new_name: str) -> None:
+        """Different source values produce different cache keys."""
+        from third_wheel.run import RenameSpec, rename_cache_key
+
+        index_url = "https://pypi.org/simple/"
+        key_no_source = rename_cache_key(
+            [RenameSpec(original=original, new_name=new_name)], index_url, None
+        )
+        key_with_source = rename_cache_key(
+            [
+                RenameSpec(
+                    original=original, new_name=new_name, source="git+https://example.com/repo@main"
+                )
+            ],
+            index_url,
+            None,
+        )
+        assert key_no_source != key_with_source
 
 
 # ---------------------------------------------------------------------------
