@@ -12,6 +12,7 @@ uv run python -m pytest -m integration   # Integration tests (slower, network)
 
 ## Test File Locations
 
+- Property-based tests: `test_properties.py` (Hypothesis)
 - Unit tests: `test_rename.py`
 - Tag/download tests: `test_download.py`
 - Run/metadata parsing tests: `test_run.py`
@@ -32,6 +33,18 @@ Tests create isolated venvs and install both original and renamed packages to ve
 3. Internal import chains stay within each package
 4. No `sys.modules` contamination
 5. No leaked references to old package name in renamed package
+
+## Property-Based Tests (Hypothesis)
+
+`tests/test_properties.py` uses Hypothesis to test invariants and roundtrip properties:
+
+```bash
+uv run pytest tests/test_properties.py -v
+```
+
+53 property tests covering: name normalization, filename parse/build roundtrip, import rewriting, wheel rename roundtrip, PEP 723 parsing, CLI rename parsing, dependency patching, RECORD hashing, metadata updates, wheel tag parsing, rename merging, comment/TOML extraction, cache key generation, server config parsing/normalization/lookup, root/project HTML generation, and filename rewriting roundtrips.
+
+Slow tests (`rename_wheel_from_bytes` roundtrips) use `max_examples=50` and `deadline=5000`.
 
 ## Test Wheel Creation
 
