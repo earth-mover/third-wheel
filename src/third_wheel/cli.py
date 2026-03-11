@@ -161,7 +161,7 @@ def inspect(wheel_path: Path, as_json: bool) -> None:
 
                 for ext in extensions:
                     assert isinstance(ext, dict)
-                    if ext.get("has_underscore_prefix") == "True":
+                    if ext.get("has_underscore_prefix"):
                         status = "[green]✓ Yes[/green]"
                     else:
                         status = "[red]✗ No[/red]"

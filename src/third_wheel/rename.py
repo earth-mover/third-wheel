@@ -6,10 +6,6 @@ import hashlib
 import re
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Iterator
 
 
 def normalize_name(name: str) -> str:
@@ -29,6 +25,10 @@ def parse_wheel_filename(filename: str) -> dict[str, str]:
     """Parse a wheel filename into its components.
 
     Format: {distribution}-{version}(-{build})?-{python}-{abi}-{platform}.whl
+
+    The last three dash-separated parts are always python-abi-platform.
+    If there are 6+ parts, the third part is a build tag (per PEP 427:
+    build tags start with a digit).
     """
     name = Path(filename).stem  # Remove .whl
     parts = name.split("-")
@@ -36,25 +36,24 @@ def parse_wheel_filename(filename: str) -> dict[str, str]:
     if len(parts) < 5:
         raise ValueError(f"Invalid wheel filename: {filename}")
 
-    # Check if there's a build tag (starts with a digit)
-    if len(parts) >= 6 and parts[2][0].isdigit():
-        return {
-            "distribution": parts[0],
-            "version": parts[1],
-            "build": parts[2],
-            "python": parts[3],
-            "abi": parts[4],
-            "platform": parts[5],
-        }
-    else:
-        return {
-            "distribution": parts[0],
-            "version": parts[1],
-            "build": "",
-            "python": parts[2],
-            "abi": parts[3],
-            "platform": parts[4],
-        }
+    # Last 3 parts are always python-abi-platform
+    platform = parts[-1]
+    abi = parts[-2]
+    python = parts[-3]
+    distribution = parts[0]
+    version = parts[1]
+
+    # Everything between version and python/abi/platform is the build tag
+    build = "-".join(parts[2:-3]) if len(parts) > 5 else ""
+
+    return {
+        "distribution": distribution,
+        "version": version,
+        "build": build,
+        "python": python,
+        "abi": abi,
+        "platform": platform,
+    }
 
 
 def _build_wheel_filename(components: dict[str, str]) -> str:
@@ -64,13 +63,6 @@ def _build_wheel_filename(components: dict[str, str]) -> str:
         parts.append(components["build"])
     parts.extend([components["python"], components["abi"], components["platform"]])
     return "-".join(parts) + ".whl"
-
-
-def _iter_wheel_files(wheel_path: Path) -> Iterator[tuple[str, bytes]]:
-    """Iterate over all files in a wheel, yielding (name, content) tuples."""
-    with zipfile.ZipFile(wheel_path, "r") as zf:
-        for name in zf.namelist():
-            yield name, zf.read(name)
 
 
 def _update_metadata(content: bytes, _old_name: str, new_name: str) -> bytes:
@@ -151,6 +143,85 @@ def _find_package_dir(namelist: list[str], dist_name: str, version: str) -> str 
     return None
 
 
+def _rename_wheel_files(
+    zf: zipfile.ZipFile,
+    old_name_normalized: str,
+    new_name: str,
+    new_name_normalized: str,
+    version: str,
+    *,
+    update_imports: bool = True,
+) -> dict[str, bytes]:
+    """Core rename logic: process all files in a wheel ZipFile.
+
+    Renames package directories, dist-info, data directories, updates
+    METADATA and Python imports, and generates a new RECORD file.
+
+    Returns a dict of {filename: content} for the renamed wheel.
+    """
+    # Discover the actual package directory (may differ from distribution name)
+    pkg_dir = _find_package_dir(zf.namelist(), old_name_normalized, version)
+    old_import_name = pkg_dir if pkg_dir else old_name_normalized
+
+    # Old and new dist-info directory names
+    old_dist_info = f"{old_name_normalized}-{version}.dist-info"
+    new_dist_info = f"{new_name_normalized}-{version}.dist-info"
+
+    # Old and new data directory names (if present)
+    old_data_dir = f"{old_name_normalized}-{version}.data"
+    new_data_dir = f"{new_name_normalized}-{version}.data"
+
+    files: dict[str, bytes] = {}
+
+    for name in zf.namelist():
+        content = zf.read(name)
+        new_file_name = name
+
+        # Rename the package directory
+        if name.startswith(f"{old_import_name}/") or name == old_import_name:
+            new_file_name = new_name_normalized + name[len(old_import_name) :]
+
+        # Rename the dist-info directory
+        elif name.startswith(f"{old_dist_info}/") or name == old_dist_info:
+            new_file_name = new_dist_info + name[len(old_dist_info) :]
+
+        # Rename the data directory (if present)
+        elif name.startswith(f"{old_data_dir}/") or name == old_data_dir:
+            new_file_name = new_data_dir + name[len(old_data_dir) :]
+
+        # Update file contents as needed
+        new_content = content
+
+        # Update METADATA file
+        if new_file_name == f"{new_dist_info}/METADATA":
+            new_content = _update_metadata(content, old_name_normalized, new_name)
+
+        # Update Python files (imports)
+        elif update_imports and new_file_name.endswith(".py"):
+            new_content = _update_python_imports(content, old_import_name, new_name_normalized)
+
+        # Skip the old RECORD file (we'll generate a new one)
+        if name.endswith("/RECORD"):
+            continue
+
+        files[new_file_name] = new_content
+
+    # Generate new RECORD file
+    record_path = f"{new_dist_info}/RECORD"
+    record_lines: list[str] = []
+
+    for file_name, file_content in sorted(files.items()):
+        file_hash = compute_record_hash(file_content)
+        file_size = len(file_content)
+        record_lines.append(f"{file_name},{file_hash},{file_size}")
+
+    record_lines.append(f"{record_path},,")
+    record_content = "\n".join(record_lines).encode("utf-8")
+    files[record_path] = record_content
+
+    return files
+
+
 def rename_wheel(
     wheel_path: Path,
     new_name: str,
@@ -193,67 +264,15 @@ def rename_wheel(
     new_wheel_name = _build_wheel_filename(components)
     output_path = output_dir / new_wheel_name
 
-    # Discover the actual package directory (may differ from distribution name)
     with zipfile.ZipFile(wheel_path, "r") as zf:
-        pkg_dir = _find_package_dir(zf.namelist(), old_name_normalized, components["version"])
-    old_import_name = pkg_dir if pkg_dir else old_name_normalized
-
-    # Process the wheel
-    files: dict[str, bytes] = {}
-
-    # Old and new dist-info directory names
-    old_dist_info = f"{old_name_normalized}-{components['version']}.dist-info"
-    new_dist_info = f"{new_name_normalized}-{components['version']}.dist-info"
-
-    # Old and new data directory names (if present)
-    old_data_dir = f"{old_name_normalized}-{components['version']}.data"
-    new_data_dir = f"{new_name_normalized}-{components['version']}.data"
-
-    for name, content in _iter_wheel_files(wheel_path):
-        new_file_name = name
-
-        # Rename the package directory
-        if name.startswith(f"{old_import_name}/") or name == old_import_name:
-            new_file_name = new_name_normalized + name[len(old_import_name) :]
-
-        # Rename the dist-info directory
-        elif name.startswith(f"{old_dist_info}/") or name == old_dist_info:
-            new_file_name = new_dist_info + name[len(old_dist_info) :]
-
-        # Rename the data directory (if present)
-        elif name.startswith(f"{old_data_dir}/") or name == old_data_dir:
-            new_file_name = new_data_dir + name[len(old_data_dir) :]
-
-        # Update file contents as needed
-        new_content = content
-
-        # Update METADATA file
-        if new_file_name == f"{new_dist_info}/METADATA":
-            new_content = _update_metadata(content, old_name, new_name)
-
-        # Update Python files (imports)
-        elif update_imports and new_file_name.endswith(".py"):
-            new_content = _update_python_imports(content, old_import_name, new_name_normalized)
-
-        # Skip the old RECORD file (we'll generate a new one)
-        if name.endswith("/RECORD"):
-            continue
-
-        files[new_file_name] = new_content
-
-    # Generate new RECORD file
-    record_path = f"{new_dist_info}/RECORD"
-    record_lines: list[str] = []
-
-    for file_name, content in sorted(files.items()):
-        file_hash = compute_record_hash(content)
-        file_size = len(content)
-        record_lines.append(f"{file_name},{file_hash},{file_size}")
-
-    # RECORD itself has no hash
-    record_lines.append(f"{record_path},,")
-    record_content = "\n".join(record_lines).encode("utf-8")
-    files[record_path] = record_content
+        files = _rename_wheel_files(
+            zf,
+            old_name_normalized,
+            new_name,
+            new_name_normalized,
+            components["version"],
+            update_imports=update_imports,
+        )
 
     # Write the new wheel
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -281,7 +300,6 @@ def rename_wheel_from_bytes(
     """
     from io import BytesIO
 
-    # Read the wheel from bytes
     input_buffer = BytesIO(wheel_bytes)
 
     with zipfile.ZipFile(input_buffer, "r") as zf:
@@ -292,77 +310,26 @@ def rename_wheel_from_bytes(
             raise ValueError(msg)
 
         # Extract version from dist-info directory name
-        dist_info_name = dist_info_dirs[0].split("/")[0]  # e.g., "icechunk-1.0.0.dist-info"
+        dist_info_name = dist_info_dirs[0].split("/")[0]
         parts = dist_info_name.replace(".dist-info", "").rsplit("-", 1)
+        if len(parts) < 2:
+            raise ValueError(f"Cannot parse version from dist-info directory: {dist_info_name}")
         old_name_normalized = parts[0]
-        version = parts[1] if len(parts) > 1 else "0.0.0"
+        version = parts[1]
 
         new_name_normalized = normalize_name(new_name)
 
         if old_name_normalized == new_name_normalized:
             return wheel_bytes  # No rename needed
 
-        # Discover the actual package directory (may differ from distribution name)
-        pkg_dir = _find_package_dir(zf.namelist(), old_name_normalized, version)
-        old_import_name = pkg_dir if pkg_dir else old_name_normalized
-
-        # Old and new dist-info directory names
-        old_dist_info = f"{old_name_normalized}-{version}.dist-info"
-        new_dist_info = f"{new_name_normalized}-{version}.dist-info"
-
-        # Old and new data directory names (if present)
-        old_data_dir = f"{old_name_normalized}-{version}.data"
-        new_data_dir = f"{new_name_normalized}-{version}.data"
-
-        # Process files
-        files: dict[str, bytes] = {}
-
-        for name in zf.namelist():
-            content = zf.read(name)
-            new_file_name = name
-
-            # Rename the package directory
-            if name.startswith(f"{old_import_name}/") or name == old_import_name:
-                new_file_name = new_name_normalized + name[len(old_import_name) :]
-
-            # Rename the dist-info directory
-            elif name.startswith(f"{old_dist_info}/") or name == old_dist_info:
-                new_file_name = new_dist_info + name[len(old_dist_info) :]
-
-            # Rename the data directory (if present)
-            elif name.startswith(f"{old_data_dir}/") or name == old_data_dir:
-                new_file_name = new_data_dir + name[len(old_data_dir) :]
-
-            # Update file contents as needed
-            new_content = content
-
-            # Update METADATA file
-            if new_file_name == f"{new_dist_info}/METADATA":
-                new_content = _update_metadata(content, old_name_normalized, new_name)
-
-            # Update Python files (imports)
-            elif update_imports and new_file_name.endswith(".py"):
-                new_content = _update_python_imports(content, old_import_name, new_name_normalized)
-
-            # Skip the old RECORD file (we'll generate a new one)
-            if name.endswith("/RECORD"):
-                continue
-
-            files[new_file_name] = new_content
-
-    # Generate new RECORD file
-    record_path = f"{new_dist_info}/RECORD"
-    record_lines: list[str] = []
-
-    for file_name, content in sorted(files.items()):
-        file_hash = compute_record_hash(content)
-        file_size = len(content)
-        record_lines.append(f"{file_name},{file_hash},{file_size}")
-
-    # RECORD itself has no hash
-    record_lines.append(f"{record_path},,")
-    record_content = "\n".join(record_lines).encode("utf-8")
-    files[record_path] = record_content
+        files = _rename_wheel_files(
+            zf,
+            old_name_normalized,
+            new_name,
+            new_name_normalized,
+            version,
+            update_imports=update_imports,
+        )
 
     # Write the new wheel to bytes
     output_buffer = BytesIO()
@@ -397,7 +364,7 @@ def inspect_wheel(wheel_path: Path) -> dict[str, object]:
     }
 
     files_list: list[str] = []
-    extensions_list: list[dict[str, str]] = []
+    extensions_list: list[dict[str, object]] = []
 
     with zipfile.ZipFile(wheel_path, "r") as zf:
         for name in zf.namelist():
@@ -413,7 +380,7 @@ def inspect_wheel(wheel_path: Path) -> dict[str, object]:
                     {
                         "path": name,
                         "module_name": ext_name,
-                        "has_underscore_prefix": str(has_underscore),
+                        "has_underscore_prefix": has_underscore,
                     }
                 )
                 if has_underscore:

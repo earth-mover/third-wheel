@@ -320,11 +320,14 @@ def prepare_wheels(
 def cache_dir() -> Path:
     """Return the third-wheel cache directory.
 
-    Uses $THIRD_WHEEL_CACHE_DIR if set, otherwise ~/.cache/third-wheel/.
+    Priority: $THIRD_WHEEL_CACHE_DIR > $XDG_CACHE_HOME/third-wheel > ~/.cache/third-wheel.
     """
     env = os.environ.get("THIRD_WHEEL_CACHE_DIR")
     if env:
         return Path(env)
+    xdg = os.environ.get("XDG_CACHE_HOME")
+    if xdg:
+        return Path(xdg) / "third-wheel"
     return Path.home() / ".cache" / "third-wheel"
 
 
