@@ -443,7 +443,9 @@ third-wheel rename ./downloads/pkg.whl my_pkg_old -o ./renamed/
 
 ### 🛞 download
 
-Download a compatible wheel from a package index:
+Download a compatible wheel from a package index. Matching wheels are ranked by
+their full PEP 440 version. For the same version, the most specific compatible
+Python, ABI and platform tag wins.
 
 ```bash
 third-wheel download <package> [-o <output_dir>] [-i <index_url>] [--version <spec>] [--rename <new_name>]

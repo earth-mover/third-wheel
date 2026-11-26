@@ -95,9 +95,8 @@ def best_wheel(
     if not compatible:
         return None
 
-    # Sort by version (descending), then tag priority (ascending)
-    compatible.sort(key=lambda x: (-x[1].major, -x[1].minor, -x[1].micro, x[2]))
-    return compatible[0][0]
+    # Compare complete PEP 440 versions before breaking ties by tag priority.
+    return max(compatible, key=lambda candidate: (candidate[1], -candidate[2]))[0]
 
 
 def list_wheels(
